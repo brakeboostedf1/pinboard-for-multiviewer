@@ -145,14 +145,14 @@ class Board : Form
     }
 
     // MINIMIZEBOX | SYSMENU: borderless forms need them to minimize from the taskbar.
-    // LAYERED: Windows keeps the board colour itself (Paint), so the board never shows the screen behind it.
+    // LAYERED: Windows keeps the board colour itself (PaintBack), so the board never shows the screen behind it.
     protected override CreateParams CreateParams
     { get { var p = base.CreateParams; p.Style |= 0x20000 | 0x80000; p.ExStyle |= 0x80000; return p; } }
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        Paint();
+        PaintBack();
         int on = 1; // taskbar preview drawn by Pinboard: the board on screen
         N.DwmSetWindowAttribute(Handle, 7, ref on, 4);  // DWMWA_FORCE_ICONIC_REPRESENTATION
         N.DwmSetWindowAttribute(Handle, 10, ref on, 4); // DWMWA_HAS_ICONIC_BITMAP
@@ -161,7 +161,7 @@ class Board : Form
         hooks[2] = N.SetWinEventHook(0x0A, 0x0B, 0, onEvent, 0, 0, 0); // MOVESIZESTART..END
     }
 
-    void Paint()
+    void PaintBack()
     {
         if (!IsHandleCreated || area.IsEmpty) return;
         using var b = new Bitmap(area.Width, area.Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
@@ -341,7 +341,7 @@ class Board : Form
         {
             (scr, area) = (home.Bounds, home.WorkingArea);
             Bounds = area; // full screen would hide the taskbar
-            Paint();
+            PaintBack();
         }
         others = Screen.AllScreens.Select(s => s.Bounds).Where(b => b != scr).ToArray();
         virt = others.Aggregate(scr, Rectangle.Union);
