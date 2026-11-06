@@ -32,6 +32,28 @@ static class Theme
 
     static Color Hex(string h) => ColorTranslator.FromHtml(h);
 
+    // Smooth text as MultiViewer's Chromium draws it: grey edges, no snapping to the pixel grid.
+    // (Windows' GDI ClearType makes Exo 2 thin and jagged, so no TextRenderer or Label anywhere.)
+    public static void Draw(Graphics g, string s, Font f, Color c, RectangleF r, StringAlignment along = StringAlignment.Near, bool wrap = false)
+    {
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+        using var b = new SolidBrush(c);
+        using var sf = new StringFormat(StringFormat.GenericDefault) { Alignment = along, LineAlignment = wrap ? StringAlignment.Near : StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter };
+        if (!wrap) sf.FormatFlags |= StringFormatFlags.NoWrap;
+        g.DrawString(s, f, b, r, sf);
+    }
+
+    // Size of text drawn by Draw on a monitor of this dpi, wrapped at width (0: one line).
+    public static Size Measure(string s, Font f, int width, int dpi)
+    {
+        using var bmp = new Bitmap(1, 1);
+        bmp.SetResolution(dpi, dpi);
+        using var g = Graphics.FromImage(bmp);
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+        var z = g.MeasureString(s.Length == 0 ? " " : s, f, width > 0 ? width : int.MaxValue, StringFormat.GenericDefault);
+        return new((int)Math.Ceiling(z.Width), (int)Math.Ceiling(z.Height));
+    }
+
     // Windows 11 round corners and dark scroll bars; older Windows ignores both.
     public static void Round(IntPtr h) { int r = 2; N.DwmSetWindowAttribute(h, 33, ref r, 4); } // DWMWA_WINDOW_CORNER_PREFERENCE = ROUND
     public static void DarkScroll(Control c) => SetWindowTheme(c.Handle, "DarkMode_Explorer", null);
@@ -76,7 +98,7 @@ class Popup : Form
         int w = S(minWidth);
         using (var g = CreateGraphics())
             foreach (var (t, r, _) in rows)
-                w = Math.Max(w, TextRenderer.MeasureText(g, t, Theme.Body).Width + TextRenderer.MeasureText(g, r, Theme.Small).Width + S(64));
+                w = Math.Max(w, Theme.Measure(t, Theme.Body, 0, DeviceDpi).Width + Theme.Measure(r, Theme.Small, 0, DeviceDpi).Width + S(64));
         for (int i = 0; i < rows.Count; i++) list.Controls.Add(new Row(this, rows[i].Text, rows[i].Right, rows[i].Go, header != null && i == 0, w));
         list.MouseDown += (_, e) => { if (e.Button == MouseButtons.Left) Drag(); };
         Controls.Add(list);
@@ -132,8 +154,8 @@ class Popup : Form
             int pad = menu.S(16);
             if (hot && Clickable) { using var b = new SolidBrush(Theme.Sel); g.FillRectangle(b, 0, 0, Width, Height); }
             var box = new Rectangle(pad, 0, Width - 2 * pad, Height);
-            TextRenderer.DrawText(g, Text, header ? Theme.Small : Theme.Body, box, header ? Theme.Muted : Theme.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
-            TextRenderer.DrawText(g, right, Theme.Small, box, Theme.Muted, TextFormatFlags.VerticalCenter | TextFormatFlags.Right);
+            Theme.Draw(g, Text, header ? Theme.Small : Theme.Body, header ? Theme.Muted : Theme.Text, box);
+            Theme.Draw(g, right, Theme.Small, Theme.Muted, box, StringAlignment.Far);
         }
 
         protected override void OnMouseEnter(EventArgs e) { hot = true; Invalidate(); }
@@ -330,12 +352,12 @@ class Dots : Layer
         if (boards == n && current == cur && label == name && d == dot) return;
         (n, cur, name, dot, pad) = (boards, current, label, d, (int)(14 * scale));
         using var font = new Font(Theme.Face, 9.5f * scale);
-        int tw = TextRenderer.MeasureText(label, font).Width, h = (int)(32 * scale);
+        int tw = Theme.Measure(label, font, 0, 96).Width, h = (int)(32 * scale);
         var b = new Bitmap(pad + n * dot + pad / 2 + tw + pad, h, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
         using (var g = Graphics.FromImage(b))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
             using var back = new SolidBrush(Color.FromArgb(230, Theme.Title));
             g.FillRectangle(back, 0, 0, b.Width, h);
             using var pen = new Pen(Theme.Muted, Math.Max(1, scale));
@@ -353,4 +375,22 @@ class Dots : Layer
     }
 
     public void ShowAt(Point p) { if (!On || p != at) { at = p; Put(bmp, p); } }
+}
+
+// Text block drawn like MultiViewer's (Theme.Draw): wraps at its width, height set from the text.
+class Txt : Control
+{
+    public Txt(string s, Font f, Color c, int width)
+    {
+        Font = f; ForeColor = c; DoubleBuffered = true; Width = width; Text = s; TabStop = false;
+        Height = Theme.Measure(s, f, width, DeviceDpi).Height;
+    }
+
+    protected override void OnTextChanged(EventArgs e) { base.OnTextChanged(e); Invalidate(); }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.Clear(Parent?.BackColor ?? Theme.Main);
+        Theme.Draw(e.Graphics, Text, Font, ForeColor, ClientRectangle, StringAlignment.Near, true);
+    }
 }

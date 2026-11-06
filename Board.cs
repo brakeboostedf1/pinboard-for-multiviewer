@@ -253,7 +253,7 @@ class Board : Form
         {
             g.Clear(BackColor);
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+            g.TextRenderingHint = TextRenderingHint.AntiAlias;
             if (!full) Title(g); // full screen: board colour only
             if (Edge > 0) { using var line = new Pen(Theme.Line); g.DrawRectangle(line, 0, 0, Width - 1, Height - 1); }
         }
@@ -365,19 +365,11 @@ class Board : Form
         var choice = cfg.OnExit;
         if (choice == "ask")
         {
-            var only = new TaskDialogButton("Close Pinboard only") { Tag = "keep" };
-            var all = new TaskDialogButton("Close Pinboard and players") { Tag = "close" };
-            var page = new TaskDialogPage
-            {
-                Caption = Program.Name, Heading = "Close Pinboard",
-                Text = "Players stay open in MultiViewer, or close with Pinboard.",
-                Buttons = { only, all, TaskDialogButton.Cancel },
-                Verification = new TaskDialogVerificationCheckBox("Don't ask again (change it in Settings)"),
-            };
-            var r = TaskDialog.ShowDialog(this, page);
-            if (r == TaskDialogButton.Cancel || r.Tag is not string t) return;
+            var (t, remember) = Ask.Show(this, "Close Pinboard", "Players stay open in MultiViewer, or close with Pinboard.", "Don't ask again (change it in Settings)",
+                ("Close Pinboard and players", "close"), ("Close Pinboard only", "keep"));
+            if (t == null) return;
             choice = t;
-            if (page.Verification.Checked) { cfg.OnExit = t; cfg.Save(); }
+            if (remember) { cfg.OnExit = t; cfg.Save(); }
         }
         closePlayers = choice == "close";
         Close();

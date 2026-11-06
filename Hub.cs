@@ -22,7 +22,7 @@ class Hub : Form
     readonly Cfg c;                 // working copy; each change goes to the board as a new copy
     bool auto = Setup.AutoStarts;
     readonly Panel side, head, body;
-    readonly Label title, subtitle;
+    readonly Txt title, subtitle;
     readonly List<Nav> navs = [];
     readonly Popup drop = new(false);
     string? capture;                // shortcut waiting for keys
@@ -51,7 +51,7 @@ class Hub : Form
         Theme.Round(Handle);
 
         side = new Panel { Bounds = new(0, 0, S(260), Height), BackColor = Theme.Side };
-        side.Controls.Add(new Label { Text = Program.Name, Font = Theme.Strong, ForeColor = Theme.Text, Bounds = new(S(20), S(20), S(230), S(28)) });
+        side.Controls.Add(new Txt(Program.Name, Theme.Strong, Theme.Text, S(230)) { Location = new(S(20), S(24)), BackColor = Theme.Side });
         for (int i = 0; i < Sections.Length; i++)
         {
             int k = i;
@@ -59,16 +59,12 @@ class Hub : Form
             n.Click += (_, _) => Select(k);
             navs.Add(n); side.Controls.Add(n);
         }
-        side.Controls.Add(new Label
-        {
-            Text = $"v{Application.ProductVersion.Split('+')[0]} · Windows x64", Font = Theme.Small, ForeColor = Theme.Muted,
-            Bounds = new(S(20), Height - S(40), S(230), S(24)),
-        });
+        side.Controls.Add(new Txt($"v{Application.ProductVersion.Split('+')[0]} · Windows x64", Theme.Small, Theme.Muted, S(230)) { Location = new(S(20), Height - S(40)) });
         side.MouseDown += (_, e) => { if (e.Button == MouseButtons.Left) Theme.Move(this); };
 
         head = new Panel { Bounds = new(S(260), 0, Width - S(260), S(64)), BackColor = Theme.Main };
-        title = new Label { Font = Theme.Strong, ForeColor = Theme.Text, Bounds = new(S(24), S(12), S(500), S(24)) };
-        subtitle = new Label { Font = Theme.Small, ForeColor = Theme.Soft, Bounds = new(S(24), S(34), S(560), S(20)) };
+        title = new Txt("", Theme.Strong, Theme.Text, S(500)) { Location = new(S(24), S(12)) };
+        subtitle = new Txt("", Theme.Small, Theme.Soft, S(560)) { Location = new(S(24), S(36)) };
         var close = new Nav("", "") { Bounds = new(head.Width - S(56), S(12), S(40), S(40)) };
         close.Click += (_, _) => Close();
         head.Controls.AddRange([title, subtitle, close]);
@@ -78,6 +74,7 @@ class Hub : Form
         Controls.AddRange([side, head, body]);
         Theme.DarkScroll(body);
         FormClosed += (_, _) => Icon?.Dispose();
+        Shown += (_, _) => { ActiveControl = null; body.AutoScrollPosition = Point.Empty; }; // no control takes focus, so the page opens at the top
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -87,7 +84,7 @@ class Hub : Form
         e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
     }
 
-    protected override void OnKeyDown(KeyEventArgs e) { base.OnKeyDown(e); if (e.KeyCode == Keys.Escape && capture == null) Close(); }
+    protected override void OnKeyDown(KeyEventArgs e) { base.OnKeyDown(e); if (e.KeyCode == Keys.Escape && capture == null && ActiveControl is not Edit) Close(); } // Esc in a text field: undo the typing
 
     // Keys reach a waiting shortcut before any control sees them (arrows, Tab, Esc included).
     protected override bool ProcessCmdKey(ref Message m, Keys data)
@@ -138,7 +135,7 @@ class Hub : Form
                     ("1  Start", "Open Pinboard and MultiViewer. Pinboard waits in system tray. It opens when your setup opens, on board 1.", null),
                     ("2  Change board", "Click arrow at left or right edge, or click a dot in title bar. Full screen: dots are at the bottom.", null),
                     ("3  Move player", $"Drag player onto arrow and hold. Or press {K("sendPrev")} / {K("sendNext")}: player in front goes to previous / next board.", null),
-                    ("4  Resize", $"Drag Pinboard edges. Players scale with it. Too small: players are cut at the edge. {K("full")}: full screen.", null),
+                    ("4  Resize", $"Drag Pinboard edges. Players scale with it and stay inside. {K("full")}: full screen.", null),
                     ("5  Save", "Arrange boards, then save setup in MultiViewer. Setup opens with each player on its board.", null),
                     ("6  Find player", $"Player lost or minimized: press {K("menu")}, or click tray icon. Click player: it comes back on this board. Drag menu to move it.", null));
                 Heading("Settings needed");
@@ -193,6 +190,7 @@ class Hub : Form
         }
         body.Controls.Add(new Panel { Bounds = new(0, y, 1, S(16)) }); // bottom margin
         body.ResumeLayout();
+        ActiveControl = null;
         body.AutoScrollPosition = new(0, scroll);
     }
 
@@ -200,9 +198,9 @@ class Hub : Form
 
     void Heading(string text)
     {
-        var l = new Label { Text = text, Font = Theme.Head, ForeColor = Theme.Text, AutoSize = true, Location = new(S(24), y + S(16)) };
+        var l = new Txt(text, Theme.Head, Theme.Text, PageW) { Location = new(S(24), y + S(16)) };
         body.Controls.Add(l);
-        y += S(16) + l.PreferredHeight + S(10);
+        y += S(16) + l.Height + S(10);
     }
 
     // Card: rounded outline; each row title, description below it, control at the right; dividers between rows.
@@ -213,11 +211,11 @@ class Hub : Form
         foreach (var (t, d, ctl) in rows)
         {
             int textW = w - 2 * pad - (ctl == null ? 0 : ctl.Width + S(24));
-            // Labels size themselves (wrapped at textW), so the height always fits what they draw.
-            Label L(string s, Font f, Color c) => new() { Text = s, Font = f, ForeColor = c, BackColor = Theme.Main, AutoSize = true, MaximumSize = new(textW, 0), Padding = Padding.Empty, Margin = Padding.Empty };
+            // Text blocks size themselves (wrapped at textW), so the height always fits what they draw.
+            Txt L(string s, Font f, Color c) => new(s, f, c, textW);
             var tl = L(t, Theme.Strong, Theme.Text);
             var dl = d.Length == 0 ? null : L(d, Theme.Small, Theme.Soft);
-            int th = tl.GetPreferredSize(new(textW, 0)).Height, dh = dl?.GetPreferredSize(new(textW, 0)).Height ?? 0, gap = dl == null ? 0 : S(2);
+            int th = tl.Height, dh = dl?.Height ?? 0, gap = dl == null ? 0 : S(2);
             int h = Math.Max(th + gap + dh, ctl?.Height ?? 0) + 2 * S(14);
             int ty = yy + (h - (th + gap + dh)) / 2;
             tl.Location = new(pad, ty); card.Controls.Add(tl);
@@ -247,19 +245,12 @@ class Hub : Form
         return o;
     }
 
-    // Outlined text box; the value is taken when the box loses focus or Enter is pressed.
+    // Outlined text field drawn like the rest; the value is taken when it loses focus or Enter is pressed.
     Control Field(string text, Action<string> done)
     {
-        var box = new Outline("", false) { Size = new(S(260), S(40)), Cursor = Cursors.IBeam };
-        var t = new TextBox { Text = text, BorderStyle = BorderStyle.None, BackColor = Theme.Main, ForeColor = Theme.Text, Font = Theme.Body, MaxLength = 30 };
-        t.Bounds = new(S(14), (box.Height - t.PreferredHeight) / 2, box.Width - S(28), t.PreferredHeight);
-        string last = text;
-        void Take() { var s = t.Text.Trim(); if (s != last) { last = s; done(s); } }
-        t.Leave += (_, _) => Take();
-        t.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; Take(); } };
-        box.Controls.Add(t);
-        box.Click += (_, _) => t.Focus();
-        return box;
+        var f = new Edit(text, 30) { Size = new(S(260), S(40)) };
+        f.Done += done;
+        return f;
     }
 }
 
@@ -290,7 +281,7 @@ class Nav : Control
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public bool Selected { get => selected; set { selected = value; Invalidate(); } }
 
-    public Nav(string icon, string text) { this.icon = icon; Text = text; DoubleBuffered = true; Cursor = Cursors.Hand; }
+    public Nav(string icon, string text) { this.icon = icon; Text = text; DoubleBuffered = true; Cursor = Cursors.Hand; TabStop = false; }
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -299,9 +290,9 @@ class Nav : Control
         g.SmoothingMode = SmoothingMode.AntiAlias;
         if (selected || hot) { using var b = new SolidBrush(selected ? Theme.Sel : Theme.Hover); using var r = Theme.Rounded(new RectangleF(0, 0, Width - 1, Height - 1), 4 * DeviceDpi / 96f); g.FillPath(b, r); }
         int s = (int)(DeviceDpi / 96f * 16);
-        if (Text.Length == 0) { TextRenderer.DrawText(g, icon, Theme.Icon, ClientRectangle, Theme.Text, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter); return; }
-        TextRenderer.DrawText(g, icon, Theme.Icon, new Rectangle(s / 2, 0, 2 * s, Height), Theme.Soft, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-        TextRenderer.DrawText(g, Text, Theme.Body, new Rectangle(3 * s, 0, Width - 3 * s, Height), Theme.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+        if (Text.Length == 0) { Theme.Draw(g, icon, Theme.Icon, Theme.Text, ClientRectangle, StringAlignment.Center); return; }
+        Theme.Draw(g, icon, Theme.Icon, Theme.Soft, new Rectangle(s / 2, 0, 2 * s, Height), StringAlignment.Center);
+        Theme.Draw(g, Text, Theme.Body, Theme.Text, new Rectangle(3 * s, 0, Width - 3 * s, Height));
     }
 
     protected override void OnMouseEnter(EventArgs e) { hot = true; Invalidate(); }
@@ -312,11 +303,12 @@ class Nav : Control
 class Toggle : Control
 {
     bool on;
+    public bool On => on;
     public event Action<bool>? Changed;
 
     public Toggle(bool on)
     {
-        this.on = on; DoubleBuffered = true; Cursor = Cursors.Hand;
+        this.on = on; DoubleBuffered = true; Cursor = Cursors.Hand; TabStop = false;
         Size = new((int)(52 * DeviceDpi / 96f), (int)(32 * DeviceDpi / 96f));
     }
 
@@ -343,7 +335,7 @@ class Outline : Control
     readonly bool caret;
     bool hot;
 
-    public Outline(string text, bool caret) { Text = text; this.caret = caret; DoubleBuffered = true; Cursor = Cursors.Hand; BackColor = Theme.Main; }
+    public Outline(string text, bool caret) { Text = text; this.caret = caret; DoubleBuffered = true; Cursor = Cursors.Hand; BackColor = Theme.Main; TabStop = false; }
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -354,7 +346,7 @@ class Outline : Control
         using (var p = new Pen(hot ? Theme.Soft : Theme.Outline))
         using (var r = Theme.Rounded(new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f), 4 * u)) g.DrawPath(p, r);
         int pad = (int)(14 * u);
-        TextRenderer.DrawText(g, Text, Theme.Body, new Rectangle(pad, 0, Width - 2 * pad - (caret ? pad : 0), Height), Theme.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+        Theme.Draw(g, Text, Theme.Body, Theme.Text, new Rectangle(pad, 0, Width - 2 * pad - (caret ? pad : 0), Height));
         if (!caret) return;
         float cx = Width - pad - 4 * u, cy = Height / 2f;
         using var b = new SolidBrush(Theme.Text);
@@ -363,4 +355,181 @@ class Outline : Control
 
     protected override void OnMouseEnter(EventArgs e) { hot = true; Invalidate(); }
     protected override void OnMouseLeave(EventArgs e) { hot = false; Invalidate(); }
+}
+
+// One-line text field drawn smooth like the rest (Windows' own text box draws thin and jagged Exo 2).
+// Typing, caret, Backspace, Delete, arrows, Home, End, Ctrl+A/C/V. Enter or leaving keeps the text; Esc puts the last kept text back.
+class Edit : Control
+{
+    public event Action<string>? Done;
+    readonly int max;
+    readonly System.Windows.Forms.Timer blinker = new() { Interval = 530 };
+    string kept;
+    int caret;
+    bool all, hot, blink = true;
+
+    public Edit(string text, int max)
+    {
+        Text = kept = text; this.max = max; caret = text.Length;
+        DoubleBuffered = true; Cursor = Cursors.IBeam; TabStop = true; Font = Theme.Body;
+        SetStyle(ControlStyles.Selectable, true);
+        blinker.Tick += (_, _) => { blink = !blink; Invalidate(); };
+        Disposed += (_, _) => blinker.Dispose();
+    }
+
+    int Pad => (int)(14 * DeviceDpi / 96f);
+
+    // Width of the first n characters, measured the way they are drawn.
+    float TextW(int n)
+    {
+        if (n == 0) return 0;
+        using var g = CreateGraphics();
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+        using var sf = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.MeasureTrailingSpaces };
+        return g.MeasureString(Text[..n], Font, PointF.Empty, sf).Width;
+    }
+
+    int At(int x)
+    {
+        int best = 0; float d = float.MaxValue;
+        for (int i = 0; i <= Text.Length; i++) { float e = Math.Abs(Pad + TextW(i) - x); if (e < d) { d = e; best = i; } }
+        return best;
+    }
+
+    void Set(string s, int at) { Text = s.Length > max ? s[..max] : s; caret = Math.Clamp(at, 0, Text.Length); all = false; blink = true; Invalidate(); }
+
+    void Insert(string s)
+    {
+        s = s.Replace("\r", "").Replace("\n", " ");
+        if (all) Set(s, s.Length);
+        else Set(Text[..caret] + s + Text[caret..], caret + s.Length);
+    }
+
+    void Keep() { var s = Text.Trim(); if (s != kept) { kept = s; Done?.Invoke(s); } }
+
+    protected override bool IsInputKey(Keys k) => (k & Keys.KeyCode) is Keys.Left or Keys.Right or Keys.Home or Keys.End || base.IsInputKey(k);
+
+    protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); all = true; caret = Text.Length; blinker.Start(); Invalidate(); }
+    protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); blinker.Stop(); all = false; Keep(); Invalidate(); }
+    protected override void OnMouseEnter(EventArgs e) { hot = true; Invalidate(); }
+    protected override void OnMouseLeave(EventArgs e) { hot = false; Invalidate(); }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        bool had = Focused;
+        Focus();
+        if (had) Set(Text, At(e.X)); // first click selects all, the next places the caret
+    }
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+        bool ctrl = e.Control;
+        switch (e.KeyCode)
+        {
+            case Keys.Left: Set(Text, all ? 0 : caret - 1); break;
+            case Keys.Right: Set(Text, all ? Text.Length : caret + 1); break;
+            case Keys.Home: Set(Text, 0); break;
+            case Keys.End: Set(Text, Text.Length); break;
+            case Keys.Back: if (all) Set("", 0); else if (caret > 0) Set(Text.Remove(caret - 1, 1), caret - 1); break;
+            case Keys.Delete: if (all) Set("", 0); else if (caret < Text.Length) Set(Text.Remove(caret, 1), caret); break;
+            case Keys.Enter: Keep(); all = true; Invalidate(); break;
+            case Keys.Escape: Set(kept, kept.Length); break;
+            case Keys.A when ctrl: all = true; Invalidate(); break;
+            case Keys.C when ctrl: if (Text.Length > 0) Clipboard.SetText(Text); break;
+            case Keys.V when ctrl: if (Clipboard.ContainsText()) Insert(Clipboard.GetText()); break;
+            default: return;
+        }
+        e.Handled = e.SuppressKeyPress = true;
+    }
+
+    protected override void OnKeyPress(KeyPressEventArgs e)
+    {
+        base.OnKeyPress(e);
+        if (char.IsControl(e.KeyChar)) return;
+        Insert(e.KeyChar.ToString());
+        e.Handled = true;
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.Clear(Parent!.BackColor);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+        float u = DeviceDpi / 96f;
+        using (var p = new Pen(Focused ? Theme.Accent : hot ? Theme.Soft : Theme.Outline, Focused ? 2 * u : 1))
+        using (var r = Theme.Rounded(new RectangleF(1, 1, Width - 2, Height - 2), 4 * u)) g.DrawPath(p, r);
+        using var sf = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.MeasureTrailingSpaces | StringFormatFlags.NoWrap };
+        float th = Font.GetHeight(g), y = (Height - th) / 2;
+        if (all && Focused && Text.Length > 0) { using var sel = new SolidBrush(Color.FromArgb(90, Theme.Accent)); g.FillRectangle(sel, Pad, y, TextW(Text.Length), th); }
+        using (var b = new SolidBrush(Theme.Text)) g.DrawString(Text, Font, b, Pad, y, sf);
+        if (Focused && blink && !all) { using var c = new Pen(Theme.Text, u); float x = Pad + TextW(caret); g.DrawLine(c, x, y, x, y + th); }
+    }
+}
+
+// MUI button: contained (accent fill, dark text) for the main choice, outlined for the rest.
+class Btn : Control
+{
+    readonly bool main;
+    bool hot;
+
+    public Btn(string text, bool main) { Text = text; this.main = main; DoubleBuffered = true; Cursor = Cursors.Hand; Font = Theme.Strong; TabStop = false; }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.Clear(Parent!.BackColor);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        using var r = Theme.Rounded(new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f), 4 * DeviceDpi / 96f);
+        if (main) { using var b = new SolidBrush(hot ? ColorTranslator.FromHtml("#b3dafb") : Theme.Accent); g.FillPath(b, r); }
+        else
+        {
+            if (hot) { using var b = new SolidBrush(Color.FromArgb(20, Theme.Accent)); g.FillPath(b, r); }
+            using var p = new Pen(Color.FromArgb(128, Theme.Accent)); g.DrawPath(p, r);
+        }
+        Theme.Draw(g, Text, Font, main ? ColorTranslator.FromHtml("#121212") : Theme.Accent, ClientRectangle, StringAlignment.Center);
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { hot = true; Invalidate(); }
+    protected override void OnMouseLeave(EventArgs e) { hot = false; Invalidate(); }
+}
+
+// Question in Pinboard's look: heading, text, "don't ask again" switch, choices (last one is the main choice) and Cancel.
+static class Ask
+{
+    public static (string? Tag, bool Remember) Show(IWin32Window owner, string heading, string text, string check, params (string Label, string Tag)[] choices)
+    {
+        using var f = new Form { FormBorderStyle = FormBorderStyle.None, StartPosition = FormStartPosition.CenterScreen, ShowInTaskbar = false, TopMost = true, BackColor = Theme.Main, KeyPreview = true, Text = Program.Name };
+        _ = f.Handle;
+        int S(int px) => (int)Math.Round(px * f.DeviceDpi / 96f);
+        int w = S(560), x = S(24);
+        var h = new Txt(heading, Theme.Head, Theme.Text, w - 2 * x) { Location = new(x, S(22)) };
+        var t = new Txt(text, Theme.Body, Theme.Soft, w - 2 * x) { Location = new(x, h.Bottom + S(8)) };
+        var tog = new Toggle(false) { Location = new(x - S(6), t.Bottom + S(14)) };
+        var tl = new Txt(check, Theme.Small, Theme.Soft, w - tog.Right - x) { Location = new(tog.Right + S(4), 0) };
+        tl.Top = tog.Top + (tog.Height - tl.Height) / 2;
+        tl.Click += (_, _) => tog.GetType().GetMethod("OnClick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(tog, [EventArgs.Empty]);
+        f.Controls.AddRange([h, t, tog, tl]);
+        string? result = null;
+        int by = tog.Bottom + S(20), right = w - x;
+        var all = choices.Select((c, i) => (c.Label, (string?)c.Tag, Main: i == choices.Length - 1)).Prepend(("Cancel", null, false)).ToList();
+        foreach (var (label, tag, main) in all.AsEnumerable().Reverse())
+        {
+            var b = new Btn(label, main);
+            b.Size = new(Theme.Measure(label, Theme.Strong, 0, f.DeviceDpi).Width + S(32), S(38));
+            b.Location = new(right - b.Width, by);
+            right = b.Left - S(10);
+            b.Click += (_, _) => { result = tag; f.Close(); };
+            f.Controls.Add(b);
+        }
+        f.ClientSize = new(w, by + S(38) + S(22));
+        f.KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) f.Close(); };
+        f.MouseDown += (_, e) => { if (e.Button == MouseButtons.Left) Theme.Move(f); };
+        f.Paint += (_, e) => { using var p = new Pen(Theme.Line); e.Graphics.DrawRectangle(p, 0, 0, f.Width - 1, f.Height - 1); };
+        Theme.Round(f.Handle);
+        f.ShowDialog(owner);
+        return (result, tog.On);
+    }
 }
