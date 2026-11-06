@@ -31,7 +31,18 @@ class Board : Form
     Bitmap? face;                          // window image handed to Windows (layered window)
     Point lastCursor;
     IntPtr drag;
-    long holdFrom, homeAt;
+    long holdFrom;
+    // Setup memory: MultiViewer's saved setups, board on screen at each save, the setup opening now.
+    List<Setups.Setup> setups = Setups.Read() ?? [];
+    readonly Dictionary<string, int> notes = Setups.Notes();
+    readonly FileSystemWatcher? watch;
+    volatile bool setupsDue;                              // MultiViewer wrote its setups file
+    readonly List<IntPtr> burst = [], waiting = [];       // windows of the setup opening now; new windows waiting for a slide to end
+    readonly Dictionary<IntPtr, Rectangle> arrived = [];  // where each window of the burst first showed (its saved bounds)
+    readonly Dictionary<IntPtr, long> hold = [];          // placed from a setup: kept at its place until then [ms]
+    long burstUntil;
+    Setups.Setup? session = Setups.Session();             // last session: MultiViewer opens it again at start
+    readonly Dictionary<IntPtr, Rectangle> last = [];     // where each window was last seen
     int cur, ticks, holdSide;
     bool busy, keys, layoutDue, menuDue;
 
@@ -59,15 +70,23 @@ class Board : Form
         tray.MouseUp += (_, e) => { if (e.Button is MouseButtons.Left or MouseButtons.Right) menu.Open(Cursor.Position, MenuItems(), "Players"); };
 
         onEvent = OnEvent;
+        // MultiViewer writes setups.config.json when a setup is saved: note which board is on screen then (Saved).
+        try
+        {
+            watch = new(Path.GetDirectoryName(Setups.MvFile)!, Path.GetFileName(Setups.MvFile)) { NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size };
+            watch.Changed += (_, _) => setupsDue = true; watch.Created += (_, _) => setupsDue = true; watch.Renamed += (_, _) => setupsDue = true;
+            watch.EnableRaisingEvents = true;
+        }
+        catch (Exception e) when (e is ArgumentException or IOException) { watch = null; } // no MultiViewer folder yet: positions only
         // 60 Hz while MultiViewer players are open (edge arrows, drags, board dots); 2 Hz while waiting for them.
         tick.Tick += (_, _) =>
         {
-            if (win.Count == 0 || ticks++ % 30 == 0) Scan();
+            if (setupsDue && Setups.Read() is { } read) { setupsDue = false; Saved(read); }
+            if (win.Count == 0 || ticks++ % (Environment.TickCount64 < burstUntil ? 6 : 30) == 0) Scan(); // a setup opening: 10 scans a second
             tick.Interval = win.Count == 0 ? 500 : 16;
             if (win.Count == 0) return;
             if (ticks % 60 == 0) N.DwmInvalidateIconicBitmaps(Handle); // preview refreshes when shown
             if (menuDue && ModifierKeys == Keys.None) { menuDue = false; menu.Open(Cursor.Position, MenuItems(), "Players"); }
-            if (homeAt != 0 && Environment.TickCount64 >= homeAt) { homeAt = 0; Go(0, -1, 0, false); } // setup opened: board 1
             if (layoutDue && !busy) { layoutDue = false; Arrange(); }
             Back(); Hover(); Guard();
         };
@@ -155,7 +174,7 @@ class Board : Form
             case 0x323: Thumb((int)((long)m.LParam >> 16) & 0xFFFF, (int)(long)m.LParam & 0xFFFF); return; // WM_DWMSENDICONICTHUMBNAIL
         }
         if (m.Msg == Program.HowTo) Front();
-        if (m.Msg == Program.QuitMsg) Close(); // setup or uninstall asks
+        if (m.Msg == Program.QuitMsg) { decided = true; Close(); } // setup or uninstall asks: no question
         base.WndProc(ref m);
     }
 
@@ -219,14 +238,16 @@ class Board : Form
 
     protected override void SetVisibleCore(bool v) => base.SetVisibleCore(v && win.Count > 0);
 
-    // Minimized boards hide their players, so restore first: players stay visible after exit.
+    // Closed by the user from the taskbar or with Alt+F4: same question as Exit. Minimized boards hide their players,
+    // so restore first: players stay visible after exit.
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        if (!decided && e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; BeginInvoke(Exit); return; }
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
         base.OnFormClosing(e);
     }
 
-    bool closePlayers;
+    bool closePlayers, decided; // decided: Exit asked (or needed no question), or setup closes Pinboard
 
     // Exit from the menu or the close button: Pinboard only, or MultiViewer players too (asked unless the user chose for good).
     // Setup, uninstall and Windows shut-down close Pinboard only, without asking.
@@ -242,6 +263,7 @@ class Board : Form
             if (remember) { cfg.OnExit = t; cfg.Save(); }
         }
         closePlayers = choice == "close";
+        decided = true;
         Close();
     }
 
@@ -252,6 +274,7 @@ class Board : Form
         if (closePlayers) foreach (var h in win) N.PostMessage(h, 0x10, 0, 0); // WM_CLOSE
         foreach (var h in hid) N.ShowWindow(h, 4);
         hid.Clear(); SaveHidden();
+        Setups.ForgetSession(); // every player goes on screen now: the boards of the last session no longer hold
         foreach (var h in win)
         {
             if (!N.IsIconic(h)) ToScreen(h);
@@ -288,6 +311,8 @@ class Board : Form
         hid.RemoveWhere(h => !N.IsWindow(h));
         if (drag != 0 && !N.IsWindow(drag)) drag = 0;
         foreach (var h in at.Keys.Where(h => !win.Contains(h)).ToList()) at.Remove(h);
+        // every window gone (MultiViewer closed): their last places and the board on screen are the session it opens next time
+        if (was && win.Count == 0 && last.Count > 0) { session = Setups.SaveSession(last.Values.ToList(), cur); last.Clear(); }
         // a player put on another monitor leaves the boards
         foreach (var h in win.Where(h => MvMain(h) || Elsewhere(h)).ToList()) Release(h);
         var fresh = new List<IntPtr>();
@@ -305,29 +330,20 @@ class Board : Form
             if ((N.GetWindowLongPtr(h, -20) & 0x8) != 0 || (N.GetWindowLongPtr(h, -16) & 0xC00000) == 0) pinned.Add(h);
             return true;
         }, 0);
-        var used = win.Where(h => !N.IsIconic(h)).Select(Zone).Where(k => k >= 0 && k < cfg.Boards).ToHashSet();
-        used.UnionWith(hid.Where(at.ContainsKey).Select(h => at[h].Board));
-        int free = Enumerable.Range(0, cfg.Boards).Where(k => !used.Contains(k)).DefaultIfEmpty(-1).First();
         if (!was && win.Count > 0)
         {
-            // first players: the board on screen is the first board whose parking place is empty; board 1 shows once the setup has opened
-            cur = Math.Max(0, free);
-            homeAt = Environment.TickCount64 + 1500;
+            cur = 0; // always opens on board 1
             dots.Wake();
             Visible = true;
             Fill();
             Areas();
         }
-        // A MultiViewer setup opens players on screen for the board that showed at save, the rest in their parking places.
-        // A player landing in the parking place of the board on screen: the setup was saved on another board, so take an empty one.
-        else if (free >= 0 && fresh.Any(h => !N.IsIconic(h) && Zone(h) == cur))
-        {
-            foreach (var (h, p) in at.Where(a => a.Value.Board == cur).ToList()) at[h] = p with { Board = free };
-            cur = free;
-            PaintBack();
-        }
-        foreach (var h in fresh) Sort(h);
+        foreach (var h in hold.Keys.Where(h => !win.Contains(h)).ToList()) hold.Remove(h);
+        waiting.RemoveAll(h => !win.Contains(h));
+        waiting.AddRange(fresh.Where(h => !N.IsIconic(h))); // minimized: sorted when restored (Back)
+        if (!busy && waiting.Count > 0) { Arrive(waiting); waiting.Clear(); } // never during a slide: its moves would mix with these
         if (!busy && drag == 0) { foreach (var h in win.ToList()) Keep(h); }
+        if (!busy) foreach (var h in win.Where(h => at.ContainsKey(h) && !N.IsIconic(h) && !hid.Contains(h))) last[h] = R(h);
         if (win.Count > 0) Fill();
         if (was && win.Count == 0) Hide();
         Hotkeys(Mine(N.GetForegroundWindow()));
@@ -347,6 +363,64 @@ class Board : Form
         if (t != R(h)) N.SetWindowPos(h, 0, t.X, t.Y, t.Width, t.Height, MoveSize);
     }
 
+    // ---- Setup memory (Setups.cs): each window of a MultiViewer setup goes to the board it was saved on ----
+
+    // New windows from a setup (known by their saved bounds) go to their saved board and place, whatever order they
+    // arrive in and whatever board shows. Windows less than 15 s apart are one setup opening: when more of them match
+    // another setup better, that setup places all of them. Windows of no setup sort by where they are.
+    void Arrive(List<IntPtr> fresh)
+    {
+        long now = Environment.TickCount64;
+        bool start = now > burstUntil;
+        if (start) { burst.Clear(); arrived.Clear(); }
+        burstUntil = now + 15000;
+        foreach (var h in fresh) { burst.Add(h); arrived[h] = R(h); }
+        burst.RemoveAll(h => !win.Contains(h));
+        var s = Setups.Best(burst.Select(h => arrived[h]).ToList(), session == null ? setups : [.. setups, session]);
+        if (s == null) { foreach (var h in fresh) Sort(h); return; }
+        if (start && cur != 0) { cur = 0; foreach (var h in at.Keys.ToList()) Put(h); dots.Wake(); } // a setup opens on board 1
+        var zones = s.Rects.Select(r => Geo.Region(r.X + r.Width / 2, scr, virt)).ToList();
+        int shown = Setups.ScreenBoard(zones, cfg.Boards, s.Shown ?? (notes.TryGetValue(s.Id, out var n) ? n : null));
+        var taken = new HashSet<int>();
+        foreach (var h in burst)
+        {
+            int i = Setups.Match(arrived[h], s.Rects, taken);
+            if (i < 0 || zones[i] == int.MinValue) { if (fresh.Contains(h)) Sort(h); continue; } // not in it, or saved on another monitor
+            taken.Add(i);
+            var r = arrived[h]; // MultiViewer's own size and place (saved bounds plus its window border); the setup gives the board
+            if (zones[i] >= 0) r.Offset(-Park(zones[i]), 0);
+            var p = new Place(Math.Min(zones[i] >= 0 ? zones[i] : shown, cfg.Boards - 1), Frac(r));
+            if (at.TryGetValue(h, out var q) && q == p) continue;
+            at[h] = p;
+            hold[h] = now + 5000;
+            Put(h);
+        }
+    }
+
+    // Player to its place: on screen if its board shows, else in its parking place (full screen: hidden while away).
+    void Put(IntPtr h, bool size = true)
+    {
+        var p = at[h];
+        if (p.Board != cur && Full(h)) { Conceal(h); return; }
+        if (p.Board == cur && hid.Contains(h)) Reveal(h);
+        var t = Px(p.F);
+        if (p.Board != cur) t.Offset(Park(p.Board), 0);
+        var r = R(h);
+        if (size && t != r) N.SetWindowPos(h, 0, t.X, t.Y, t.Width, t.Height, MoveSize);
+        else if (!size && (Math.Abs(r.X - t.X) > 2 || Math.Abs(r.Y - t.Y) > 2)) N.SetWindowPos(h, 0, t.X, t.Y, 0, 0, MoveOnly);
+    }
+
+    // MultiViewer wrote its setups file: a setup whose windows changed was saved just now, with the board on screen now.
+    void Saved(List<Setups.Setup> now)
+    {
+        var old = setups.ToDictionary(s => s.Id, s => s.Windows);
+        bool changed = false;
+        foreach (var s in now.Where(s => !old.TryGetValue(s.Id, out var w) || w != s.Windows)) { notes[s.Id] = cur; changed = true; }
+        foreach (var id in notes.Keys.Where(id => now.All(s => s.Id != id)).ToList()) { notes.Remove(id); changed = true; } // deleted in MultiViewer
+        setups = now;
+        if (changed) Setups.Save(notes);
+    }
+
     // x that puts a player back on home, keeping its place within one screen width.
     int OnHome(int l, int r)
     {
@@ -361,9 +435,15 @@ class Board : Form
         if (hid.Contains(h) || N.IsIconic(h) || !at.TryGetValue(h, out var p)) return;
         var r = R(h);
         bool home = Zone(h) == -1;
+        // Just placed from a setup: MultiViewer can still move it while the setup loads, so it goes back to its place.
+        if (hold.TryGetValue(h, out var until))
+        {
+            if (Environment.TickCount64 < until) { Put(h, false); return; }
+            hold.Remove(h);
+        }
         if (p.Board == cur)
         {
-            if (!home) { Sort(h); return; }
+            if (!home) { Put(h); return; } // its board shows: on screen
             var t = Px(p.F); // only a move counts: MultiViewer itself adjusts sizes (aspect ratio, minimum size)
             if (!layoutDue && Environment.TickCount64 > quiet && (Math.Abs(r.X - t.X) > 8 || Math.Abs(r.Y - t.Y) > 8)) at[h] = p with { F = Frac(r) };
             return;
