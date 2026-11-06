@@ -1,13 +1,15 @@
 # Pinboard for MultiViewer
 
-Pinboard for MultiViewer puts the media players into a single tab in your Windows taskbar. Great for single monitor use. Up to 4 boards in one window. Change the board with the arrows at the edge, the dots at the top of the screen, or the keyboard.
+Pinboard for MultiViewer takes MultiViewer media players and puts them into a single tab in your Windows taskbar. Great for single monitor use and tab switch friendly. Up to 4 pinboards in one window. Change the board with the arrows at the screen edge, the dots at the top of the screen, or the keyboard.
 
-Pinboard for MultiViewer is an add-on application. It is not an official F1 or MultiViewer product. It moves MultiViewer media players only. It does not change MultiViewer or its files.
+Pinboard for MultiViewer is an add-on application. It is not an official F1 or MultiViewer product. It moves MultiViewer media players into it only. It does not change MultiViewer or its files.
 
 ## Download
 
 1. Open [Releases](../../releases/latest).
 2. Download `Pinboard-for-MultiViewer-Setup.exe`.
+
+Windows only release. No Mac or Linux
 
 You need Windows 10 or Windows 11, 64-bit, and [MultiViewer](https://multiviewer.app/).
 
