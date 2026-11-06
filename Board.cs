@@ -40,6 +40,8 @@ class Board : Form
     readonly List<IntPtr> burst = [], waiting = [];       // windows of the setup opening now; new windows waiting for a slide to end
     readonly Dictionary<IntPtr, Rectangle> arrived = [];  // where each window of the burst first showed (its saved bounds)
     readonly Dictionary<IntPtr, long> hold = [];          // placed from a setup: kept at its place until then [ms]
+    readonly HashSet<IntPtr> sleepy = [];                 // loaded while parked: woken when it first comes on screen (Wake)
+    readonly Dictionary<IntPtr, long> wakeAt = [];        // woken then [ms]
     long burstUntil;
     Setups.Setup? session = Setups.Session();             // last session: MultiViewer opens it again at start
     readonly Dictionary<IntPtr, Rectangle> last = [];     // where each window was last seen
@@ -88,7 +90,7 @@ class Board : Form
             if (ticks % 60 == 0) N.DwmInvalidateIconicBitmaps(Handle); // preview refreshes when shown
             if (menuDue && ModifierKeys == Keys.None) { menuDue = false; menu.Open(Cursor.Position, MenuItems(), "Players"); }
             if (layoutDue && !busy) { layoutDue = false; Arrange(); }
-            Back(); Hover(); Guard();
+            Back(); Hover(); Guard(); Woken();
         };
         tick.Start();
         _ = Handle; // hotkeys and hooks need it before the window first shows
@@ -339,6 +341,7 @@ class Board : Form
             Areas();
         }
         foreach (var h in hold.Keys.Where(h => !win.Contains(h)).ToList()) hold.Remove(h);
+        sleepy.RemoveWhere(h => !win.Contains(h));
         waiting.RemoveAll(h => !win.Contains(h));
         waiting.AddRange(fresh.Where(h => !N.IsIconic(h))); // minimized: sorted when restored (Back)
         if (!busy && waiting.Count > 0) { Arrive(waiting); waiting.Clear(); } // never during a slide: its moves would mix with these
@@ -376,24 +379,44 @@ class Board : Form
         burstUntil = now + 15000;
         foreach (var h in fresh) { burst.Add(h); arrived[h] = R(h); }
         burst.RemoveAll(h => !win.Contains(h));
-        var s = Setups.Best(burst.Select(h => arrived[h]).ToList(), session == null ? setups : [.. setups, session]);
+        foreach (var h in fresh) if (Zone(h) >= 0) sleepy.Add(h); // opened in a parking place: loads while hidden
+        var s = Setups.Best(burst.Select(h => arrived[h]).ToList(), session == null ? setups : [.. setups, session], scr, virt);
         if (s == null) { foreach (var h in fresh) Sort(h); return; }
         if (start && cur != 0) { cur = 0; foreach (var h in at.Keys.ToList()) Put(h); dots.Wake(); } // a setup opens on board 1
         var zones = s.Rects.Select(r => Geo.Region(r.X + r.Width / 2, scr, virt)).ToList();
+        var opened = Setups.Opened(s, scr, virt);
         int shown = Setups.ScreenBoard(zones, cfg.Boards, s.Shown ?? (notes.TryGetValue(s.Id, out var n) ? n : null));
         var taken = new HashSet<int>();
         foreach (var h in burst)
         {
-            int i = Setups.Match(arrived[h], s.Rects, taken);
+            int i = Setups.Find(arrived[h], s, opened, taken);
             if (i < 0 || zones[i] == int.MinValue) { if (fresh.Contains(h)) Sort(h); continue; } // not in it, or saved on another monitor
             taken.Add(i);
-            var r = arrived[h]; // MultiViewer's own size and place (saved bounds plus its window border); the setup gives the board
-            if (zones[i] >= 0) r.Offset(-Park(zones[i]), 0);
+            // MultiViewer's own size and place (saved bounds plus its window border, or maximized on screen); the setup gives the board
+            var r = arrived[h];
+            if (Geo.Region(r.X + r.Width / 2, scr, virt) is var az and >= 0) r.Offset(-Park(az), 0);
             var p = new Place(Math.Min(zones[i] >= 0 ? zones[i] : shown, cfg.Boards - 1), Frac(r));
             if (at.TryGetValue(h, out var q) && q == p) continue;
             at[h] = p;
             hold[h] = now + 5000;
+            if (p.Board != cur) sleepy.Add(h); // parked before it has loaded
             Put(h);
+        }
+    }
+
+    // A timing window that loaded while parked draws late until it is hidden and shown once, as minimize and restore do;
+    // done the first time it comes on screen. Video players play on while parked and need nothing.
+    // 0.3 s after it lands, so MultiViewer has set the window up.
+    void Wake(IntPtr h) { if (sleepy.Remove(h) && !IsPlayer(h)) wakeAt[h] = Environment.TickCount64 + 300; }
+
+    void Woken()
+    {
+        foreach (var (h, t) in wakeAt.Where(w => Environment.TickCount64 >= w.Value).ToList())
+        {
+            wakeAt.Remove(h);
+            if (!N.IsWindow(h) || !N.IsWindowVisible(h) || !OnBoard(h)) continue;
+            N.ShowWindow(h, 0); // SW_HIDE
+            N.ShowWindow(h, 4); // SW_SHOWNOACTIVATE
         }
     }
 
@@ -408,6 +431,7 @@ class Board : Form
         var r = R(h);
         if (size && t != r) N.SetWindowPos(h, 0, t.X, t.Y, t.Width, t.Height, MoveSize);
         else if (!size && (Math.Abs(r.X - t.X) > 2 || Math.Abs(r.Y - t.Y) > 2)) N.SetWindowPos(h, 0, t.X, t.Y, 0, 0, MoveOnly);
+        if (p.Board == cur) Wake(h);
     }
 
     // MultiViewer wrote its setups file: a setup whose windows changed was saved just now, with the board on screen now.
@@ -594,7 +618,7 @@ class Board : Form
         }).ContinueWith(_ => BeginInvoke((Action)(() =>
         {
             foreach (var (h, r) in outgo) if (at.TryGetValue(h, out var p)) { var t = N.IsZoomed(h) ? r : Px(p.F); t.Offset(Park(from), 0); N.SetWindowPos(h, 0, t.X, t.Y, t.Width, t.Height, MoveSize); }
-            foreach (var (h, t) in income) N.SetWindowPos(h, 0, t.X, t.Y, t.Width, t.Height, MoveSize);
+            foreach (var (h, t) in income) { N.SetWindowPos(h, 0, t.X, t.Y, t.Width, t.Height, MoveSize); Wake(h); }
             foreach (var h in hid.Where(h => at.TryGetValue(h, out var p) && p.Board == to).ToList()) Reveal(h);
             if (keep != 0 && at.TryGetValue(keep, out var kp)) at[keep] = kp with { Board = to };
             cur = to;

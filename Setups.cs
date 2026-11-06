@@ -9,7 +9,8 @@ static class Setups
 
     // Windows: their saved state as text, to see which setups a save changed. Rects: saved bounds in screen px.
     // Shown: board on screen at save, when known with the setup itself (last session).
-    public record Setup(string Id, string Updated, string Windows, List<Rectangle> Rects, int? Shown = null);
+    // Max: saved maximized (Windows maximizes it on the screen when MultiViewer opens it, wherever it was saved).
+    public record Setup(string Id, string Updated, string Windows, List<Rectangle> Rects, int? Shown = null, List<bool>? Max = null);
 
     public static List<Setup>? Read() // null: not readable now (MultiViewer may be writing it)
     {
@@ -25,7 +26,7 @@ static class Setups
                 if (s.TryGetProperty("displays", out var ds))
                     foreach (var x in ds.EnumerateArray()) scale[x.GetProperty("id").GetInt64()] = x.GetProperty("scaleFactor").GetDouble();
                 var ws = s.GetProperty("windows");
-                var rects = new List<Rectangle>();
+                var rects = new List<Rectangle>(); var max = new List<bool>();
                 foreach (var w in ws.EnumerateArray())
                 {
                     var st = w.GetProperty("windowState");
@@ -33,8 +34,9 @@ static class Setups
                     double f = st.TryGetProperty("displayId", out var id) && scale.TryGetValue(id.GetInt64(), out var v) ? v : 1;
                     int P(string k) => (int)Math.Round(b.GetProperty(k).GetDouble() * f);
                     rects.Add(new(P("x"), P("y"), P("width"), P("height")));
+                    max.Add(st.TryGetProperty("isMaximized", out var m) && m.ValueKind == JsonValueKind.True);
                 }
-                list.Add(new(s.GetProperty("id").GetString() ?? "", s.TryGetProperty("updatedAt", out var u) ? u.GetString() ?? "" : "", ws.GetRawText(), rects));
+                list.Add(new(s.GetProperty("id").GetString() ?? "", s.TryGetProperty("updatedAt", out var u) ? u.GetString() ?? "" : "", ws.GetRawText(), rects, null, max));
             }
             return list;
         }
@@ -106,14 +108,25 @@ static class Setups
         return best;
     }
 
+    // Where each saved window shows when MultiViewer opens it: its saved place, except a saved maximized window, which
+    // Windows maximizes on the home screen: its place within its board (saved place minus its parking shift).
+    public static List<Rectangle> Opened(Setup s, Rectangle home, Rectangle virt) =>
+        s.Rects.Select((r, i) => s.Max?.ElementAtOrDefault(i) == true && Geo.Region(r.X + r.Width / 2, home, virt) is var z and >= 0
+            ? r with { X = r.X - Geo.Park(z, home, virt) } : r).ToList();
+
+    // Saved window that r is: at its saved place, or where it shows when opened (maximized); -1: none.
+    public static int Find(Rectangle r, Setup s, List<Rectangle> opened, ISet<int> taken) =>
+        Match(r, s.Rects, taken) is var i and >= 0 ? i : Match(r, opened, taken);
+
     // Setup new windows come from: the one that matches most of them; equal: the one saved last. Null: none matches.
-    public static Setup? Best(IList<Rectangle> arrived, IEnumerable<Setup> setups)
+    public static Setup? Best(IList<Rectangle> arrived, IEnumerable<Setup> setups, Rectangle home, Rectangle virt)
     {
         Setup? best = null; int most = 0;
         foreach (var s in setups.OrderByDescending(s => s.Updated, StringComparer.Ordinal))
         {
             var taken = new HashSet<int>();
-            int n = arrived.Count(r => Match(r, s.Rects, taken) is var i and >= 0 && taken.Add(i));
+            var opened = Opened(s, home, virt);
+            int n = arrived.Count(r => Find(r, s, opened, taken) is var i and >= 0 && taken.Add(i));
             if (n > most) { most = n; best = s; }
         }
         return best;
@@ -134,9 +147,17 @@ static class Setups
         Check(Match(new(400, 400, 300, 200), saved, new HashSet<int>()) == -1, "unknown window: no match");
         var a = new Setup("a", "2026-01-01", "", [new(-2, 695, 619, 349), new(0, 0, 800, 600)]);
         var b = new Setup("b", "2026-02-01", "", [new(-2, 695, 619, 349), new(1922, -2, 1246, 701)]);
-        Check(Best([new(-2, 695, 619, 349)], [a, b])?.Id == "b", "same match count: setup saved last");
-        Check(Best([new(-2, 695, 619, 349), new(0, 0, 800, 600)], [a, b])?.Id == "a", "more matches wins");
-        Check(Best([new(7, 7, 7, 7)], [a, b]) == null, "no match: no setup");
+        Rectangle home = new(0, 0, 1920, 1080);
+        Check(Best([new(-2, 695, 619, 349)], [a, b], home, home)?.Id == "b", "same match count: setup saved last");
+        Check(Best([new(-2, 695, 619, 349), new(0, 0, 800, 600)], [a, b], home, home)?.Id == "a", "more matches wins");
+        Check(Best([new(7, 7, 7, 7)], [a, b], home, home) == null, "no match: no setup");
+        // 'test three': Lap Time Series saved maximized in board 4's parking place opens maximized on screen
+        var t = new Setup("t", "2026-03-01", "", [new(7672, -8, 1936, 1048), new(1922, -2, 1244, 701)], null, [true, false]);
+        var opened = Opened(t, home, home);
+        Check(Find(new(-8, -8, 1936, 1048), t, opened, new HashSet<int>()) == 0, "maximized window opened on screen: found as saved");
+        Check(Geo.Region(t.Rects[0].X + t.Rects[0].Width / 2, home, home) == 3, "maximized window saved on board 4: stays board 4");
+        Check(Find(new(7672, -8, 1936, 1048), t, opened, new HashSet<int>()) == 0, "maximized window still at saved place: found");
+        Check(Find(new(-8, -8, 1936, 1048), t with { Max = [false, false] }, Opened(t with { Max = [false, false] }, home, home), new HashSet<int>()) == -1, "not saved maximized: no on-screen match");
         return fails;
     }
 }
