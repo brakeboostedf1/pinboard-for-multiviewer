@@ -39,7 +39,7 @@ static class Setup
             StartPosition = FormStartPosition.CenterScreen, Font = SystemFonts.MessageBoxFont, Icon = icon,
             AutoScaleMode = AutoScaleMode.Dpi, AutoScaleDimensions = new(96, 96), ClientSize = new(497, 360),
         };
-        var bold = new Font(f.Font, FontStyle.Bold);
+        var bold = new Font(f.Font!, FontStyle.Bold);
         var big = new Font(f.Font.FontFamily, 12f, FontStyle.Bold);
         Label L(string s, int x, int y, int w, Font? font = null) => new() { Text = s, Location = new(x, y), AutoSize = true, MaximumSize = new(w, 0), Font = font ?? f.Font, BackColor = Color.Transparent };
         Button B(string s, int x) => new() { Text = s, Location = new(x, 327), Size = new(75, 23), FlatStyle = FlatStyle.System };
@@ -227,19 +227,31 @@ static class Setup
             if (autoStart) run.SetValue(Name, $"\"{exe}\""); else run.DeleteValue(Name, false);
             run.DeleteValue("Pinboard", false);
         }
+        Legacy();
+    }
+
+    // Pinboard 1.0 (per user, named "Pinboard"): files, shortcuts and Apps entry go. Runs from setup and at every start.
+    public static void Legacy()
+    {
         const string old = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Pinboard";
-        using (var u = Registry.CurrentUser.OpenSubKey(old))
-            if (u?.GetValue("InstallLocation") is string d && Directory.Exists(d))
+        try
+        {
+            string? d;
+            using (var u = Registry.CurrentUser.OpenSubKey(old)) d = u?.GetValue("InstallLocation") as string;
+            if (d == null) return;
+            if (Directory.Exists(d))
             {
-                Delete(d, "Pinboard.exe", "pinboard.json");
                 foreach (var l in new[] { Environment.SpecialFolder.DesktopDirectory, Environment.SpecialFolder.Programs })
                 {
                     var lnk = Path.Combine(Environment.GetFolderPath(l), "Pinboard.lnk");
                     if (File.Exists(lnk) && Target(lnk).StartsWith(d, StringComparison.OrdinalIgnoreCase)) File.Delete(lnk);
                 }
+                Delete(d, "Pinboard.exe", "pinboard.json");
             }
-        Registry.CurrentUser.DeleteSubKeyTree(old, false);
-        Delete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pinboard"), "pinboard.log", "help-hidden", "selftest.txt");
+            Registry.CurrentUser.DeleteSubKeyTree(old, false);
+            Delete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pinboard"), "pinboard.log", "help-hidden", "selftest.txt");
+        }
+        catch (Exception e) { Directory.CreateDirectory(Program.Data); Program.Log(e); }
     }
 
     static string? Installed()

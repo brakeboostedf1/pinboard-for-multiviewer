@@ -25,6 +25,7 @@ static class Program
         if (Setup.IsSetup(args)) return Setup.Packaged() ? Setup.Show() : 1;
         Directory.CreateDirectory(Data);
         if (args.Contains("--selftest")) return Geo.SelfTest(Path.Combine(Data, "selftest.txt"));
+        Setup.Legacy();
         using var one = new Mutex(true, "MVPinboard", out bool first);
         if (!first) { N.AllowSetForegroundWindow(-1); N.PostMessage(0xFFFF, HowTo, 0, 0); return 0; } // already running: it comes to the front
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
