@@ -40,7 +40,7 @@ static class Setup
             AutoScaleMode = AutoScaleMode.Dpi, AutoScaleDimensions = new(96, 96), ClientSize = new(497, 360),
         };
         var bold = new Font(f.Font!, FontStyle.Bold);
-        var big = new Font(f.Font.FontFamily, 12f, FontStyle.Bold);
+        var big = new Font(f.Font!.FontFamily, 12f, FontStyle.Bold);
         Label L(string s, int x, int y, int w, Font? font = null) => new() { Text = s, Location = new(x, y), AutoSize = true, MaximumSize = new(w, 0), Font = font ?? f.Font, BackColor = Color.Transparent };
         Button B(string s, int x) => new() { Text = s, Location = new(x, 327), Size = new(75, 23), FlatStyle = FlatStyle.System };
 
