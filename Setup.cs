@@ -222,12 +222,18 @@ static class Setup
     // User part of setup: start with Windows, and Pinboard 1.0 (per user, named "Pinboard") removed.
     static void ForUser(string exe, bool autoStart)
     {
-        using (var run = Registry.CurrentUser.CreateSubKey(Run))
-        {
-            if (autoStart) run.SetValue(Name, $"\"{exe}\""); else run.DeleteValue(Name, false);
-            run.DeleteValue("Pinboard", false);
-        }
+        AutoStart(autoStart, exe);
         Legacy();
+    }
+
+    // Start with Windows: a per-user Run entry for this exe (setup passes the installed exe).
+    public static bool AutoStarts { get { using var k = Registry.CurrentUser.OpenSubKey(Run); return k?.GetValue(Name) != null; } }
+
+    public static void AutoStart(bool on, string? exe = null)
+    {
+        using var run = Registry.CurrentUser.CreateSubKey(Run);
+        if (on) run.SetValue(Name, $"\"{exe ?? Environment.ProcessPath}\""); else run.DeleteValue(Name, false);
+        run.DeleteValue("Pinboard", false);
     }
 
     // Pinboard 1.0 (per user, named "Pinboard"): files, shortcuts and Apps entry go. Runs from setup and at every start.

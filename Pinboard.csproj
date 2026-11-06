@@ -15,5 +15,11 @@
     <Product>Pinboard for MultiViewer</Product>
     <Company>Pinboard for MultiViewer</Company>
     <Authors>Pinboard for MultiViewer</Authors>
+    <!-- Personal build (dotnet build -p:Personal=true): Protect can be turned off in Settings. Never ship it. -->
+    <DefineConstants Condition="'$(Personal)' == 'true'">$(DefineConstants);PERSONAL</DefineConstants>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Exo 2, the font MultiViewer uses: SIL Open Font License 1.1 (fonts/OFL.txt) -->
+    <EmbeddedResource Include="fonts/*.ttf" LogicalName="%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>
