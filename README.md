@@ -1,17 +1,17 @@
 # Pinboard for MultiViewer
 
-Pinboard puts your MultiViewer players on up to 4 boards in one window. One board shows at a time. Change the board with the arrows at the edge, the dots in the title bar, or the keyboard.
+Pinboard forr MultiViewer puts the media players into a single tab in your Windows taskbar. Great for single monitor use. Up to 4 boards in one window. Change the board with the arrows at the edge, the dots in the title bar, or the keyboard.
 
-Pinboard is an add-on. It is not made by MultiViewer or by Formula 1. It moves MultiViewer windows only. It does not change MultiViewer or its files.
+Pinboard for MultiViewer is an add-on application. It is not an official F1 or MultiViewer product. It moves MultiViewer media players only. It does not change MultiViewer or its files.
 
 ## Download
 
 1. Open [Releases](../../releases/latest).
 2. Download `Pinboard-for-MultiViewer-Setup.exe`.
 
-You need Windows 10 or Windows 11, 64-bit, and MultiViewer.
+You need Windows 10 or Windows 11, 64-bit, and [MultiViewerx](https://multiviewer.app/)
 
-Windows can show "Windows protected your PC". The file has no code signature. Select **More info**, then **Run anyway**.
+Windows can show "Windows protected your PC". The file has no code signature hence the warning. Select **More info**, then **Run anyway**.
 
 ### Check the file
 
@@ -66,7 +66,7 @@ MultiViewer needs no settings. If a player snaps to half the screen at an arrow,
 
 ### Screen captures
 
-Video players show black in screenshots, screen recordings and screen sharing. F1 TV video has copy protection, so this is always on. Timing windows stay visible.
+Video players show black in screenshots, screen recordings and screen sharing. F1TV video has copyright protection, so DRM is always on. Timing windows stay visible.
 
 ## Uninstall
 
