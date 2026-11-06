@@ -37,12 +37,12 @@ Run `Pinboard-for-MultiViewer-Setup.exe`. Setup installs Pinboard in Program Fil
 
 ## How to use
 
-1. **Start.** Open Pinboard and MultiViewer. Pinboard waits in the system tray. It opens when your setup opens, on board 1.
-2. **Change board.** Click the arrow at the left or right edge, or click a dot at the top of the screen. The dots fade when a player is under them. Touch the top edge of the screen to show them again.
+1. **Start.** Open Pinboard and MultiViewer. Pinboard will minimize into the system tray. It opens when your MultiViewer setup is loaded, on board 1.
+2. **Change board.** Click the arrow at the left or right edge of the screen, or click a dot at the top of the screen.
 3. **Move a player.** Drag the player onto an arrow and hold. Or press Ctrl+Shift+Left or Ctrl+Shift+Right: the player in front goes to the previous or next board.
-4. **Full screen.** Press F11: the board also covers the taskbar. Press F11 again to show the taskbar.
-5. **Save.** Arrange your boards, then save the setup in MultiViewer. The setup opens with each player on its board.
-6. **Find a player.** If a player is lost or minimized, press Ctrl+Up or click the tray icon. Click the player: it comes back on this board.
+4. **Full screen.** Press F11: the pinboard wil cover the taskbar. Press F11 again to show the taskbar.
+5. **Save.** Arrange players on pinboards, then save the setup in MultiViewer. After saving the player should reappear on its last saved pinboard. Timing player may take a little longer to load in than youre used to. 
+6. **Find a player.** If a player is lost or minimized, press Ctrl+Up or click the tray icon and click on the media player missing.
 
 ### Shortcuts
 
@@ -66,9 +66,9 @@ Open the menu (Ctrl+Up or the tray icon), then **Settings**.
 
 MultiViewer needs no settings. If a player snaps to half the screen at an arrow, turn off **Settings > System > Multitasking > Snap windows** in Windows.
 
-### Screen captures
+### DRM (Digital Rights Managaments) Enabled
 
-Video players show black in screenshots, screen recordings and screen sharing. F1TV video has copyright protection, so DRM is always on. Timing windows stay visible.
+Video players show black when trying to, screenshot, screen record and screen share. F1TV video has copyright protection, so DRM is always on. Timing windows stay visible.
 
 ## Uninstall
 
