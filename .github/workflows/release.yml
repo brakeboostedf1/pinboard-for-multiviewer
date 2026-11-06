@@ -1,0 +1,46 @@
+# Builds the setup from this source when a version tag (v1.2.0) is pushed, records a signed build attestation,
+# and publishes a GitHub release with the setup file, its SHA-256 value and the notes from release-notes/<tag>.md.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write      # create the release
+  id-token: write      # sign the build attestation
+  attestations: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build
+        shell: pwsh
+        run: |
+          dotnet publish Pinboard.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=none -o out
+          if ($LASTEXITCODE) { exit 1 }
+          $test = Start-Process out/Pinboard.exe -ArgumentList '--selftest' -Wait -PassThru
+          if ($test.ExitCode -ne 0) { Write-Error "Self-test failed: $($test.ExitCode)"; exit 1 }
+          Copy-Item out/Pinboard.exe Pinboard-for-MultiViewer-Setup.exe
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: Pinboard-for-MultiViewer-Setup.exe
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $hash = (Get-FileHash Pinboard-for-MultiViewer-Setup.exe -Algorithm SHA256).Hash
+          $notes = (Get-Content "release-notes/$tag.md" -Raw) + "`n**SHA-256** of ``Pinboard-for-MultiViewer-Setup.exe``:`n``$hash```n"
+          Set-Content notes.md $notes
+          gh release create $tag Pinboard-for-MultiViewer-Setup.exe --title "Pinboard for MultiViewer $($tag.TrimStart('v'))" --notes-file notes.md

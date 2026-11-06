@@ -184,14 +184,15 @@ static class Setup
     }
 
     // Admin part of setup: files, shortcuts and uninstall entry for all users.
+    // "--install [folder] [--desktop] [--menu] [--silent]": no folder = Program Files; --silent shows no messages (winget).
     public static int FromArgs(string[] a)
     {
         int i = Array.IndexOf(a, "--install");
-        if (i + 1 >= a.Length) return 1;
-        try { Install(a[i + 1], a.Contains("--desktop"), a.Contains("--menu")); return 0; }
+        string dir = i + 1 < a.Length && !a[i + 1].StartsWith("--") ? a[i + 1] : DefaultDir;
+        try { Install(dir, a.Contains("--desktop"), a.Contains("--menu")); return 0; }
         catch (Exception e)
         {
-            MessageBox.Show($"Setup could not install Pinboard in this folder.\n\n{e.Message}", Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (!a.Contains("--silent")) MessageBox.Show($"Setup could not install Pinboard in this folder.\n\n{e.Message}", Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 2;
         }
     }
@@ -214,6 +215,7 @@ static class Setup
         u.SetValue("DisplayIcon", exe);
         u.SetValue("InstallLocation", dir);
         u.SetValue("UninstallString", $"\"{exe}\" --uninstall");
+        u.SetValue("QuietUninstallString", $"\"{exe}\" --uninstall --silent");
         u.SetValue("EstimatedSize", (int)(new FileInfo(exe).Length / 1024), RegistryValueKind.DWord);
         u.SetValue("NoModify", 1, RegistryValueKind.DWord);
         u.SetValue("NoRepair", 1, RegistryValueKind.DWord);
@@ -301,24 +303,26 @@ static class Setup
 
     // ---- Uninstall ----
 
+    // "--uninstall [--silent]": --silent skips the question and the messages (winget, scripts).
     public static int Remove(string[] a)
     {
         if (a.Contains("--files")) return RemoveFiles();
+        bool quiet = a.Contains("--silent");
         // Standard uninstall wording: ask, remove, confirm.
         string title = $"{Name} Uninstall";
-        if (MessageBox.Show($"Are you sure you want to completely remove {Name} and all of its components?\n\nMultiViewer and its setups stay as they are.",
+        if (!quiet && MessageBox.Show($"Are you sure you want to completely remove {Name} and all of its components?\n\nMultiViewer and its setups stay as they are.",
                 title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return 1;
         Quit();
-        int r = Admin("--uninstall --files");
+        int r = Admin("--uninstall --files" + (quiet ? " --silent" : ""));
         if (r != 0)
         {
-            MessageBox.Show(r == 1223 ? $"Uninstall needs administrator rights. {Name} was not removed." : $"{Name} could not be removed.",
+            if (!quiet) MessageBox.Show(r == 1223 ? $"Uninstall needs administrator rights. {Name} was not removed." : $"{Name} could not be removed.",
                 title, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
         using (var run = Registry.CurrentUser.OpenSubKey(Run, true)) run?.DeleteValue(Name, false);
         Delete(Program.Data, "settings.json", "pinboard.log", "help-hidden", "hidden.txt", "selftest.txt");
-        MessageBox.Show($"{Name} was successfully removed from your computer.", title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        if (!quiet) MessageBox.Show($"{Name} was successfully removed from your computer.", title, MessageBoxButtons.OK, MessageBoxIcon.Information);
         return 0;
     }
 
