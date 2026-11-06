@@ -273,12 +273,32 @@ static class Setup
         try
         {
             var l = (N.IShellLink)new N.ShellLink();
-            ((System.Runtime.InteropServices.ComTypes.IPersistFile)l).Load(lnk, 0);
+            ((N.IPersistFile)l).Load(lnk, 0);
             var s = new System.Text.StringBuilder(1024);
             l.GetPath(s, s.Capacity, 0, 0);
             return s.ToString();
         }
         catch { return ""; }
+    }
+
+    // Self-test: a shortcut made and read back the way setup makes it. The release workflow runs this in the trimmed
+    // build that ships, where a trimmed COM method would shift the others (1.3.2 made no shortcuts and broke the name).
+    public static int SelfTest(List<string> lines)
+    {
+        int fails = 0;
+        void Check(bool ok, string what) { if (!ok) fails++; lines.Add($"{(ok ? "PASS" : "FAIL")}  setup: {what}"); }
+        var lnk = Path.Combine(Program.Data, "selftest.lnk");
+        var exe = Environment.ProcessPath ?? Application.ExecutablePath;
+        try
+        {
+            Link(lnk, exe, true);
+            Check(File.Exists(lnk), "shortcut written");
+            Check(string.Equals(Target(lnk), exe, StringComparison.OrdinalIgnoreCase), "shortcut points at Pinboard");
+        }
+        catch (Exception e) { Check(false, $"shortcut: {e.GetType().Name}: {e.Message}"); }
+        finally { File.Delete(lnk); }
+        Check(Name == new string(['P', 'i', 'n', 'b', 'o', 'a', 'r', 'd']) + " for MultiViewer", "app name intact after shortcut calls");
+        return fails;
     }
 
     static void Link(string at, string target, bool want)
@@ -287,7 +307,7 @@ static class Setup
         Directory.CreateDirectory(Path.GetDirectoryName(at)!);
         var l = (N.IShellLink)new N.ShellLink();
         l.SetPath(target); l.SetWorkingDirectory(Path.GetDirectoryName(target)!); l.SetDescription(Name); l.SetIconLocation(target, 0);
-        ((System.Runtime.InteropServices.ComTypes.IPersistFile)l).Save(at, true);
+        ((N.IPersistFile)l).Save(at, true);
     }
 
     // Named files out of a folder, then the folder itself if nothing else is in it.

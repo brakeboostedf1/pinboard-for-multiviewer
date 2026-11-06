@@ -12,7 +12,20 @@ static class N
     public interface ITaskbarList { void HrInit(); void AddTab(IntPtr h); void DeleteTab(IntPtr h); void ActivateTab(IntPtr h); void SetActiveAlt(IntPtr h); }
     [ComImport, Guid("56FDF344-FD6D-11d0-958A-006097C9A090")] public class TaskbarList;
 
-    // Shortcut (.lnk) file; saved and loaded through IPersistFile. Methods in Windows' vtable order.
+    // COM interfaces: methods in Windows' vtable order. ILLink.Descriptors.xml keeps every method in the trimmed build;
+    // a trimmed unused method shifts the ones after it and calls land on the wrong method.
+    [ComImport, Guid("0000010B-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IPersistFile
+    {
+        void GetClassID(out Guid id);
+        [PreserveSig] int IsDirty();
+        void Load([MarshalAs(UnmanagedType.LPWStr)] string file, int mode);
+        void Save([MarshalAs(UnmanagedType.LPWStr)] string file, [MarshalAs(UnmanagedType.Bool)] bool remember);
+        void SaveCompleted([MarshalAs(UnmanagedType.LPWStr)] string file);
+        void GetCurFile([MarshalAs(UnmanagedType.LPWStr)] out string file);
+    }
+
+    // Shortcut (.lnk) file; saved and loaded through IPersistFile.
     [ComImport, Guid("00021401-0000-0000-C000-000000000046")] public class ShellLink;
     [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     public interface IShellLink

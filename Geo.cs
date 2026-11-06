@@ -62,6 +62,8 @@ static class Geo
         }
         lines.Add("-- setups");
         fails += Setups.SelfTest(lines);
+        lines.Add("-- setup");
+        fails += Setup.SelfTest(lines);
         lines.Insert(0, $"Pinboard self-test: {fails} failed");
         File.WriteAllLines(report, lines);
         return fails;

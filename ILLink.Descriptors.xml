@@ -1,0 +1,9 @@
+<!-- Windows COM interfaces Pinboard calls: the trimmer keeps every method, so the method order (Windows' vtable order)
+     stays intact. Without this, unused methods are dropped and calls land on the wrong method (1.3.2: no shortcuts). -->
+<linker>
+  <assembly fullname="Pinboard">
+    <type fullname="N/ITaskbarList" preserve="all" />
+    <type fullname="N/IShellLink" preserve="all" />
+    <type fullname="N/IPersistFile" preserve="all" />
+  </assembly>
+</linker>
