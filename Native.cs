@@ -66,4 +66,9 @@ static class N
     [DllImport(U)] public static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
 
     [StructLayout(LayoutKind.Sequential)] public struct MinMax { public Point Reserved, MaxSize, MaxPosition, MinTrack, MaxTrack; }
+
+    // Blur behind a window (accent policy, as the Windows taskbar uses): Windows 10 and 11.
+    [StructLayout(LayoutKind.Sequential)] public struct Accent { public int State, Flags, Color, Anim; }
+    [StructLayout(LayoutKind.Sequential)] public struct CompAttr { public int Attr; public IntPtr Data; public int Size; }
+    [DllImport(U)] public static extern bool SetWindowCompositionAttribute(IntPtr h, ref CompAttr d);
 }

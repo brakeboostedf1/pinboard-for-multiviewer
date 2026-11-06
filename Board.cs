@@ -20,6 +20,7 @@ class Board : Form
     readonly N.ITaskbarList bar = (N.ITaskbarList)new N.TaskbarList();
     readonly Arrow left = new(false), right = new(true);
     readonly Dots dots = new();
+    readonly Glass glass = new(false, false); // frosted glass under the title bar
     long dotsUntil;
     readonly Dictionary<IntPtr, Shield> shields = [];
     readonly Dictionary<IntPtr, Place> at = [];         // every player: its board and place
@@ -217,6 +218,7 @@ class Board : Form
         if (m.Msg == Program.HowTo) Front();
         if (m.Msg == Program.QuitMsg) Close(); // setup or uninstall asks
         base.WndProc(ref m);
+        if (m.Msg == 0x47) Frost(); // WM_WINDOWPOSCHANGED: glass follows the window, z-order included
     }
 
     // Edges resize, title bar moves, buttons act; HT codes so Windows does the moving, sizing and snapping.
@@ -253,44 +255,45 @@ class Board : Form
         {
             g.Clear(BackColor);
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = TextRenderingHint.AntiAlias;
+            g.TextRenderingHint = Theme.Hint;
             if (!full) Title(g); // full screen: board colour only
             if (Edge > 0) { using var line = new Pen(Theme.Line); g.DrawRectangle(line, 0, 0, Width - 1, Height - 1); }
         }
         Layer.Draw(Handle, face, Location);
     }
 
+    // Title bar: see-through tint over the frosted glass window below it (Frost); name, board dots and buttons on top.
     void Title(Graphics g)
     {
+        g.CompositingMode = CompositingMode.SourceCopy; // replace the board colour, alpha included
+        using (var tint = new SolidBrush(Color.FromArgb(Theme.Tint, Theme.Title))) g.FillRectangle(tint, 0, 0, Width, TitleH);
+        g.CompositingMode = CompositingMode.SourceOver;
+        using var font = new Font(Theme.Face, 9.5f * DeviceDpi / 96f, GraphicsUnit.Point);
+        using (var ico = new Icon(Icon!, S(16), S(16))) g.DrawIcon(ico, new Rectangle(S(10), (TitleH - S(16)) / 2, S(16), S(16)));
+        var mid = new StringFormat { LineAlignment = StringAlignment.Center };
+        using var soft = new SolidBrush(Theme.Soft);
+        g.DrawString(Program.Name, font, soft, new RectangleF(S(34), 0, Width / 2f - S(60), TitleH), mid);
+        Pips.Draw(g, cfg.Boards, cur, hover, Part, DeviceDpi / 96f);
+        using var white = new SolidBrush(Theme.Text);
+        if (cfg.Boards > 0) g.DrawString(cfg.Name(cur), font, white, new RectangleF(Part(cfg.Boards - 1).Right + S(8), 0, S(200), TitleH), mid);
+        for (int i = 10; i <= 12; i++)
         {
-            using var title = new SolidBrush(Theme.Title);
-            g.FillRectangle(title, 0, 0, Width, TitleH);
-            using var font = new Font(Theme.Face, 9.5f * DeviceDpi / 96f, GraphicsUnit.Point);
-            using (var ico = new Icon(Icon!, S(16), S(16))) g.DrawIcon(ico, new Rectangle(S(10), (TitleH - S(16)) / 2, S(16), S(16)));
-            var mid = new StringFormat { LineAlignment = StringAlignment.Center };
-            using var soft = new SolidBrush(Theme.Soft);
-            g.DrawString(Program.Name, font, soft, new RectangleF(S(34), 0, Width / 2f - S(60), TitleH), mid);
-            for (int k = 0; k < cfg.Boards; k++)
-            {
-                var r = Part(k); int d = S(k == cur ? 9 : 7);
-                var dot = new Rectangle(r.X + (r.Width - d) / 2, (TitleH - d) / 2, d, d);
-                using var pen = new Pen(k == hover ? Theme.Text : Theme.Muted, S(1));
-                if (k == cur) { using var w = new SolidBrush(Theme.Text); g.FillEllipse(w, dot); } else g.DrawEllipse(pen, dot);
-            }
-            using var white = new SolidBrush(Theme.Text);
-            if (cfg.Boards > 0) g.DrawString(cfg.Name(cur), font, white, new RectangleF(Part(cfg.Boards - 1).Right + S(8), 0, S(200), TitleH), mid);
-            for (int i = 10; i <= 12; i++)
-            {
-                var r = Part(i);
-                if (i == hover) { using var hb = new SolidBrush(i == 12 ? Theme.Red : Theme.Hover); g.FillRectangle(hb, r); }
-                using var pen = new Pen(Theme.Text, S(1));
-                int cx = r.X + r.Width / 2, cy = r.Height / 2, q = S(5);
-                if (i == 10) g.DrawLine(pen, cx - q, cy, cx + q, cy);
-                if (i == 11 && WindowState == FormWindowState.Maximized) { g.DrawRectangle(pen, cx - q + S(2), cy - q, 2 * q - S(2), 2 * q - S(2)); g.DrawRectangle(pen, cx - q, cy - q + S(2), 2 * q - S(2), 2 * q - S(2)); }
-                else if (i == 11) g.DrawRectangle(pen, cx - q, cy - q, 2 * q, 2 * q);
-                if (i == 12) { g.DrawLine(pen, cx - q, cy - q, cx + q, cy + q); g.DrawLine(pen, cx - q, cy + q, cx + q, cy - q); }
-            }
+            var r = Part(i);
+            if (i == hover) { using var hb = new SolidBrush(i == 12 ? Theme.Red : Color.FromArgb(40, Color.White)); g.FillRectangle(hb, r); }
+            using var pen = new Pen(Theme.Text, S(1));
+            int cx = r.X + r.Width / 2, cy = r.Height / 2, q = S(5);
+            if (i == 10) g.DrawLine(pen, cx - q, cy, cx + q, cy);
+            if (i == 11 && WindowState == FormWindowState.Maximized) { g.DrawRectangle(pen, cx - q + S(2), cy - q, 2 * q - S(2), 2 * q - S(2)); g.DrawRectangle(pen, cx - q, cy - q + S(2), 2 * q - S(2), 2 * q - S(2)); }
+            else if (i == 11) g.DrawRectangle(pen, cx - q, cy - q, 2 * q, 2 * q);
+            if (i == 12) { g.DrawLine(pen, cx - q, cy - q, cx + q, cy + q); g.DrawLine(pen, cx - q, cy + q, cx + q, cy - q); }
         }
+    }
+
+    // Frosted glass right under the title bar; none in full screen, minimized or hidden.
+    void Frost()
+    {
+        if (full || !N.IsWindowVisible(Handle) || N.IsIconic(Handle)) glass.Off();
+        else glass.Under(Handle, new(Left + Edge, Top + Edge, Width - 2 * Edge, TitleH - Edge));
     }
 
     // ---- Shortcuts: only while Pinboard or MultiViewer is in front, so other apps keep these keys ----

@@ -8,9 +8,10 @@ static class Theme
     public static readonly Color Title = Hex("#202020"), Side = Hex("#202020"), Main = Hex("#2a2a2a"), Hover = Hex("#333333"), Sel = Hex("#3a3a3a"),
         Line = Hex("#474747"), Outline = Hex("#5c5c5c"), Text = Color.White, Soft = Hex("#b3b3b3"), Muted = Hex("#8a8a8a"),
         Accent = Hex("#90caf9"), Red = Hex("#e10600");
+    public const int Tint = 170; // ribbon colour over its frosted glass, 0-255: lower shows more of what is behind
     // Exo 2 (the font MultiViewer uses) ships inside Pinboard.exe; loaded for GDI (TextRenderer) and GDI+ (DrawString). Segoe UI if it fails.
     static readonly System.Drawing.Text.PrivateFontCollection fonts = new();
-    public static readonly FontFamily Face = Load("Exo2-Regular.ttf", "Exo 2") ?? new("Segoe UI"), FaceBold = Load("Exo2-SemiBold.ttf", "Exo 2 SemiBold") ?? new("Segoe UI Semibold");
+    public static readonly FontFamily Face = Load("Exo2-Medium.ttf", "Exo 2 Medium") ?? new("Segoe UI"), FaceBold = Load("Exo2-SemiBold.ttf", "Exo 2 SemiBold") ?? new("Segoe UI Semibold");
     public static readonly Font Body = new(Face, 10.5f), Small = new(Face, 9.5f), Strong = new(FaceBold, 10.5f), Head = new(FaceBold, 13f),
         Icon = new("Segoe MDL2 Assets", 12f);
 
@@ -32,11 +33,12 @@ static class Theme
 
     static Color Hex(string h) => ColorTranslator.FromHtml(h);
 
-    // Smooth text as MultiViewer's Chromium draws it: grey edges, no snapping to the pixel grid.
+    // Grey smooth edges, stems snapped to the pixel grid: Medium weight drawn this way is the cleanest (compared side by side).
     // (Windows' GDI ClearType makes Exo 2 thin and jagged, so no TextRenderer or Label anywhere.)
+    public const System.Drawing.Text.TextRenderingHint Hint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
     public static void Draw(Graphics g, string s, Font f, Color c, RectangleF r, StringAlignment along = StringAlignment.Near, bool wrap = false)
     {
-        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+        g.TextRenderingHint = Theme.Hint;
         using var b = new SolidBrush(c);
         using var sf = new StringFormat(StringFormat.GenericDefault) { Alignment = along, LineAlignment = wrap ? StringAlignment.Near : StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter };
         if (!wrap) sf.FormatFlags |= StringFormatFlags.NoWrap;
@@ -49,7 +51,7 @@ static class Theme
         using var bmp = new Bitmap(1, 1);
         bmp.SetResolution(dpi, dpi);
         using var g = Graphics.FromImage(bmp);
-        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+        g.TextRenderingHint = Theme.Hint;
         var z = g.MeasureString(s.Length == 0 ? " " : s, f, width > 0 ? width : int.MaxValue, StringFormat.GenericDefault);
         return new((int)Math.Ceiling(z.Width), (int)Math.Ceiling(z.Height));
     }
@@ -269,6 +271,60 @@ class Shield : Form
     public void Off() { if (on) { N.ShowWindow(Handle, 0); on = false; } }
 }
 
+// Frosted glass under a ribbon: a click-through window kept right below it; Windows blurs what is behind.
+// The ribbon on top draws tint, dots and text and takes the clicks.
+class Glass : Form
+{
+    bool on;
+
+    public Glass(bool topMost, bool round)
+    {
+        FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual;
+        BackColor = Color.Black; TopMost = topMost; // black: no paint of its own, the blur shows
+        _ = Handle;
+        if (round) Theme.Round(Handle);
+        var a = new N.Accent { State = 3 }; // ACCENT_ENABLE_BLURBEHIND
+        var p = Marshal.AllocHGlobal(Marshal.SizeOf(a));
+        Marshal.StructureToPtr(a, p, false);
+        var d = new N.CompAttr { Attr = 19, Data = p, Size = Marshal.SizeOf(a) }; // WCA_ACCENT_POLICY
+        N.SetWindowCompositionAttribute(Handle, ref d);
+        Marshal.FreeHGlobal(p);
+    }
+
+    protected override bool ShowWithoutActivation => true;
+
+    protected override CreateParams CreateParams // TRANSPARENT (click-through) | TOOLWINDOW | NOACTIVATE
+    { get { var p = base.CreateParams; p.ExStyle |= 0x20 | 0x80 | 0x08000000; return p; } }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        e.Cancel = e.CloseReason != CloseReason.ApplicationExitCall;
+        base.OnFormClosing(e);
+    }
+
+    // Right below window above, at r (screen px).
+    public void Under(IntPtr above, Rectangle r) { N.SetWindowPos(Handle, above, r.X, r.Y, r.Width, r.Height, 0x10 | (on ? 0u : 0x40)); on = true; } // NOACTIVATE (| SHOWWINDOW)
+
+    public void Off() { if (on) { N.ShowWindow(Handle, 0); on = false; } }
+}
+
+// Board dots: the board on screen is a white pill, the others soft dots (brighter under the cursor). Each in its slot.
+static class Pips
+{
+    public static void Draw(Graphics g, int n, int cur, int hot, Func<int, Rectangle> slot, float u)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        for (int k = 0; k < n; k++)
+        {
+            var s = slot(k);
+            float w = (k == cur ? 16 : 6) * u, h = 6 * u, x = s.X + (s.Width - w) / 2f, y = s.Y + (s.Height - h) / 2f;
+            using var b = new SolidBrush(k == cur ? Color.White : Color.FromArgb(k == hot ? 220 : 110, Color.White));
+            using var r = Theme.Rounded(new RectangleF(x, y, w, h), h / 2);
+            g.FillPath(b, r);
+        }
+    }
+}
+
 // Edge arrow: clear box, every pixel of it clickable, white chevron with dark edge. Size set by the board.
 class Arrow : Layer
 {
@@ -332,10 +388,11 @@ class Arrow : Layer
 }
 
 // Board dots for full screen, where there is no title bar: bottom centre of the board, shown at the bottom edge
-// and for a moment after a board change. Click a dot to go to that board.
+// and for a moment after a board change. Click a dot to go to that board. Frosted glass under it.
 class Dots : Layer
 {
     public Action<int>? Go;
+    readonly Glass glass = new(true, true);
     Bitmap bmp = new(1, 1);
     Point at;
     int n = -1, cur, dot, pad;
@@ -357,24 +414,20 @@ class Dots : Layer
         using (var g = Graphics.FromImage(b))
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
-            using var back = new SolidBrush(Color.FromArgb(230, Theme.Title));
-            g.FillRectangle(back, 0, 0, b.Width, h);
-            using var pen = new Pen(Theme.Muted, Math.Max(1, scale));
+            g.TextRenderingHint = Theme.Hint;
+            using (var tint = new SolidBrush(Color.FromArgb(Theme.Tint, Theme.Title)))
+            using (var r = Theme.Rounded(new RectangleF(0, 0, b.Width, h), 8 * scale)) g.FillPath(tint, r); // corners match Windows 11's round glass
+            Pips.Draw(g, n, cur, -1, k => new(pad + k * dot, 0, dot, h), scale);
             using var white = new SolidBrush(Theme.Text);
-            for (int k = 0; k < n; k++)
-            {
-                int s = (int)((k == cur ? 9 : 7) * scale);
-                var r = new Rectangle(pad + k * dot + (dot - s) / 2, (h - s) / 2, s, s);
-                if (k == cur) g.FillEllipse(white, r); else g.DrawEllipse(pen, r);
-            }
             g.DrawString(label, font, white, new RectangleF(pad + n * dot + pad / 2, 0, tw, h), new StringFormat { LineAlignment = StringAlignment.Center });
         }
         bmp.Dispose(); bmp = b;
-        if (On) Put(bmp, at);
+        if (On) { Put(bmp, at); glass.Under(Handle, Box); }
     }
 
-    public void ShowAt(Point p) { if (!On || p != at) { at = p; Put(bmp, p); } }
+    public void ShowAt(Point p) { if (!On || p != at) { at = p; Put(bmp, p); glass.Under(Handle, Box); } }
+
+    public new void Off() { base.Off(); glass.Off(); }
 }
 
 // Text block drawn like MultiViewer's (Theme.Draw): wraps at its width, height set from the text.

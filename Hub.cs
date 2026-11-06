@@ -5,13 +5,17 @@ using System.Drawing.Drawing2D;
 class Hub : Form
 {
     static Hub? open;
-    static readonly string HideMark = Path.Combine(Program.Data, "help-hidden"); // "Show at start" off
+    static readonly string HideMark = Path.Combine(Program.Data, "help-hidden"); // "Don't show at start" on
 
     public static void AtStart(Board b) { if (!File.Exists(HideMark)) Open(b, 0); }
 
     public static void Open(Board b, int section)
     {
-        if (open is { IsDisposed: false }) { open.Select(section); open.Activate(); return; }
+        if (open is { IsDisposed: false })
+        {
+            if (open.WindowState == FormWindowState.Minimized) open.WindowState = FormWindowState.Normal;
+            open.Select(section); open.Activate(); return;
+        }
         open = new Hub(b);
         open.Select(section);
         open.Show();
@@ -43,7 +47,7 @@ class Hub : Form
         board = b;
         c = b.Settings.Copy();
         Text = $"{Program.Name} settings";
-        FormBorderStyle = FormBorderStyle.None; StartPosition = FormStartPosition.CenterScreen; ShowInTaskbar = false; TopMost = true;
+        FormBorderStyle = FormBorderStyle.None; StartPosition = FormStartPosition.CenterScreen;
         BackColor = Theme.Main; KeyPreview = true; DoubleBuffered = true;
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         _ = Handle;
@@ -59,6 +63,12 @@ class Hub : Form
             n.Click += (_, _) => Select(k);
             navs.Add(n); side.Controls.Add(n);
         }
+        var hide = new Toggle(File.Exists(HideMark)) { Location = new(S(14), Height - S(84)) };
+        hide.Changed += on => { if (on) File.WriteAllText(HideMark, ""); else File.Delete(HideMark); };
+        var hideText = new Txt("Don't show at start", Theme.Body, Theme.Text, S(190)) { Cursor = Cursors.Hand };
+        hideText.Location = new(hide.Right + S(4), hide.Top + (hide.Height - hideText.Height) / 2);
+        hideText.Click += (_, _) => hide.Flip();
+        side.Controls.AddRange([hide, hideText]);
         side.Controls.Add(new Txt($"v{Application.ProductVersion.Split('+')[0]} · Windows x64", Theme.Small, Theme.Muted, S(230)) { Location = new(S(20), Height - S(40)) });
         side.MouseDown += (_, e) => { if (e.Button == MouseButtons.Left) Theme.Move(this); };
 
@@ -67,7 +77,9 @@ class Hub : Form
         subtitle = new Txt("", Theme.Small, Theme.Soft, S(560)) { Location = new(S(24), S(36)) };
         var close = new Nav("", "") { Bounds = new(head.Width - S(56), S(12), S(40), S(40)) };
         close.Click += (_, _) => Close();
-        head.Controls.AddRange([title, subtitle, close]);
+        var min = new Nav("", "") { Bounds = new(close.Left - S(44), S(12), S(40), S(40)) };
+        min.Click += (_, _) => WindowState = FormWindowState.Minimized;
+        head.Controls.AddRange([title, subtitle, min, close]);
         foreach (Control x in new Control[] { head, title, subtitle }) x.MouseDown += (_, e) => { if (e.Button == MouseButtons.Left) Theme.Move(this); };
 
         body = new Panel { Bounds = new(S(260), S(64), Width - S(260), Height - S(64)), BackColor = Theme.Main, AutoScroll = true };
@@ -76,6 +88,9 @@ class Hub : Form
         FormClosed += (_, _) => Icon?.Dispose();
         Shown += (_, _) => { ActiveControl = null; body.AutoScrollPosition = Point.Empty; }; // no control takes focus, so the page opens at the top
     }
+
+    // MINIMIZEBOX | SYSMENU: the taskbar button minimizes and restores it, as in any app.
+    protected override CreateParams CreateParams { get { var p = base.CreateParams; p.Style |= 0x20000 | 0x80000; return p; } }
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -142,10 +157,6 @@ class Hub : Form
                 Card(
                     ("MultiViewer", "No settings needed.", null),
                     ("Windows", "Player snaps to half screen at an arrow: turn off Settings > System > Multitasking > Snap windows.", null));
-                Heading("This page");
-                var show = new Toggle(!File.Exists(HideMark));
-                show.Changed += on => { if (on) File.Delete(HideMark); else File.WriteAllText(HideMark, ""); };
-                Card(("Show at start", "Opens How to use each time Pinboard starts.", show));
                 break;
 
             case 1:
@@ -326,7 +337,9 @@ class Toggle : Control
         g.FillEllipse(thumb, tx, cy - d / 2, d, d);
     }
 
-    protected override void OnClick(EventArgs e) { base.OnClick(e); on = !on; Invalidate(); Changed?.Invoke(on); }
+    public void Flip() { on = !on; Invalidate(); Changed?.Invoke(on); }
+
+    protected override void OnClick(EventArgs e) { base.OnClick(e); Flip(); }
 }
 
 // Outlined box like MUI's outlined select: text left, optional caret right; brighter outline on hover.
@@ -384,7 +397,7 @@ class Edit : Control
     {
         if (n == 0) return 0;
         using var g = CreateGraphics();
-        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+        g.TextRenderingHint = Theme.Hint;
         using var sf = new StringFormat(StringFormat.GenericTypographic) { FormatFlags = StringFormatFlags.MeasureTrailingSpaces };
         return g.MeasureString(Text[..n], Font, PointF.Empty, sf).Width;
     }
@@ -457,7 +470,7 @@ class Edit : Control
         var g = e.Graphics;
         g.Clear(Parent!.BackColor);
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+        g.TextRenderingHint = Theme.Hint;
         float u = DeviceDpi / 96f;
         using (var p = new Pen(Focused ? Theme.Accent : hot ? Theme.Soft : Theme.Outline, Focused ? 2 * u : 1))
         using (var r = Theme.Rounded(new RectangleF(1, 1, Width - 2, Height - 2), 4 * u)) g.DrawPath(p, r);
@@ -510,7 +523,7 @@ static class Ask
         var tog = new Toggle(false) { Location = new(x - S(6), t.Bottom + S(14)) };
         var tl = new Txt(check, Theme.Small, Theme.Soft, w - tog.Right - x) { Location = new(tog.Right + S(4), 0) };
         tl.Top = tog.Top + (tog.Height - tl.Height) / 2;
-        tl.Click += (_, _) => tog.GetType().GetMethod("OnClick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(tog, [EventArgs.Empty]);
+        tl.Click += (_, _) => tog.Flip();
         f.Controls.AddRange([h, t, tog, tl]);
         string? result = null;
         int by = tog.Bottom + S(20), right = w - x;
