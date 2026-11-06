@@ -268,17 +268,26 @@ static class Setup
         return u?.GetValue("InstallLocation") as string;
     }
 
-    static dynamic Shell() => Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
-
-    static string Target(string lnk) { try { return (string)Shell().CreateShortcut(lnk).TargetPath; } catch { return ""; } }
+    static string Target(string lnk)
+    {
+        try
+        {
+            var l = (N.IShellLink)new N.ShellLink();
+            ((System.Runtime.InteropServices.ComTypes.IPersistFile)l).Load(lnk, 0);
+            var s = new System.Text.StringBuilder(1024);
+            l.GetPath(s, s.Capacity, 0, 0);
+            return s.ToString();
+        }
+        catch { return ""; }
+    }
 
     static void Link(string at, string target, bool want)
     {
         if (!want) { File.Delete(at); return; }
         Directory.CreateDirectory(Path.GetDirectoryName(at)!);
-        dynamic l = Shell().CreateShortcut(at);
-        l.TargetPath = target; l.WorkingDirectory = Path.GetDirectoryName(target); l.Description = Name; l.IconLocation = target + ",0";
-        l.Save();
+        var l = (N.IShellLink)new N.ShellLink();
+        l.SetPath(target); l.SetWorkingDirectory(Path.GetDirectoryName(target)!); l.SetDescription(Name); l.SetIconLocation(target, 0);
+        ((System.Runtime.InteropServices.ComTypes.IPersistFile)l).Save(at, true);
     }
 
     // Named files out of a folder, then the folder itself if nothing else is in it.

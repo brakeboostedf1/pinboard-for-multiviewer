@@ -68,7 +68,9 @@ class Cfg
     public string Skip { get; set; } = "^(Home|[0-9]{4} .+) . MultiViewer$";    // titles Pinboard leaves alone (MultiViewer main window)
 
     public static string File => Path.Combine(Program.Data, "settings.json");
-    static readonly JsonSerializerOptions Json = new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+    // Read and written by generated code (CfgJson), not reflection: works in the trimmed build.
+    static readonly System.Text.Json.Serialization.Metadata.JsonTypeInfo<Cfg> Json = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<Cfg>)
+        new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping, TypeInfoResolver = CfgJson.Default }.GetTypeInfo(typeof(Cfg));
 
     public string Name(int k) => string.IsNullOrWhiteSpace(Names.ElementAtOrDefault(k)) ? $"Board {k + 1}" : Names[k].Trim();
 
@@ -78,7 +80,7 @@ class Cfg
         catch (IOException e) { Program.Log(e); }
     }
 
-    public Cfg Copy() => JsonSerializer.Deserialize<Cfg>(JsonSerializer.Serialize(this, Json), Json)!;
+    public Cfg Copy() => JsonSerializer.Deserialize(JsonSerializer.Serialize(this, Json), Json)!;
 
     public static Cfg Load()
     {
@@ -86,7 +88,7 @@ class Cfg
         try
         {
             if (!System.IO.File.Exists(File)) d.Save();
-            c = JsonSerializer.Deserialize<Cfg>(System.IO.File.ReadAllText(File)) ?? d;
+            c = JsonSerializer.Deserialize(System.IO.File.ReadAllText(File), Json) ?? d;
         }
         catch (Exception e) { MessageBox.Show($"settings.json not read, defaults used.\n{e.Message}", Program.Name); c = d; }
         c.Boards = Math.Clamp(c.Boards, 1, 4);
@@ -103,6 +105,8 @@ class Cfg
         return c;
     }
 }
+
+[System.Text.Json.Serialization.JsonSerializable(typeof(Cfg))] partial class CfgJson : System.Text.Json.Serialization.JsonSerializerContext;
 
 // Shortcuts: stored as text ("Ctrl+Shift+Left"), registered with Windows only while Pinboard or MultiViewer is in front.
 static class Hotkey

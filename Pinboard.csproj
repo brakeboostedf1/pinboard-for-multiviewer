@@ -15,6 +15,11 @@
     <Product>Pinboard for MultiViewer</Product>
     <Company>Pinboard for MultiViewer</Company>
     <Authors>Pinboard for MultiViewer</Authors>
+    <!-- Setup 17 MB, not 52: publish drops runtime parts Pinboard does not use. Microsoft does not support trimming
+         Windows Forms apps, so test every feature after a change. COM stays on (taskbar list, shortcuts). -->
+    <PublishTrimmed>true</PublishTrimmed>
+    <_SuppressWinFormsTrimError>true</_SuppressWinFormsTrimError>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <!-- Personal build (dotnet build -p:Personal=true): Protect can be turned off in Settings. Never ship it. -->
     <DefineConstants Condition="'$(Personal)' == 'true'">$(DefineConstants);PERSONAL</DefineConstants>
   </PropertyGroup>

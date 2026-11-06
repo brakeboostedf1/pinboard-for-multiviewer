@@ -12,6 +12,28 @@ static class N
     public interface ITaskbarList { void HrInit(); void AddTab(IntPtr h); void DeleteTab(IntPtr h); void ActivateTab(IntPtr h); void SetActiveAlt(IntPtr h); }
     [ComImport, Guid("56FDF344-FD6D-11d0-958A-006097C9A090")] public class TaskbarList;
 
+    // Shortcut (.lnk) file; saved and loaded through IPersistFile. Methods in Windows' vtable order.
+    [ComImport, Guid("00021401-0000-0000-C000-000000000046")] public class ShellLink;
+    [ComImport, Guid("000214F9-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IShellLink
+    {
+        void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder f, int n, IntPtr fd, uint flags);
+        void GetIDList(out IntPtr p); void SetIDList(IntPtr p);
+        void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder s, int n);
+        void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string s);
+        void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder s, int n);
+        void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string s);
+        void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder s, int n);
+        void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string s);
+        void GetHotkey(out short k); void SetHotkey(short k);
+        void GetShowCmd(out int c); void SetShowCmd(int c);
+        void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] System.Text.StringBuilder s, int n, out int i);
+        void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string s, int i);
+        void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string s, uint r);
+        void Resolve(IntPtr h, uint f);
+        void SetPath([MarshalAs(UnmanagedType.LPWStr)] string s);
+    }
+
     public static string Title(IntPtr h)
     {
         var s = new System.Text.StringBuilder(256);

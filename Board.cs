@@ -347,14 +347,17 @@ class Board : Form
 
     protected override void SetVisibleCore(bool v) => base.SetVisibleCore(v && win.Count > 0);
 
-    // Window place is kept for next start; minimized boards hide their players, so restore first.
+    // Window place is kept for next start (only if the board was shown); minimized boards hide their players, so restore first.
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         if (full) FullScreen();
-        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
-        cfg.Maximized = WindowState == FormWindowState.Maximized;
-        var b = cfg.Maximized ? RestoreBounds : Bounds;
-        cfg.Window = [b.X, b.Y, b.Width, b.Height];
+        if (N.IsWindowVisible(Handle))
+        {
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            cfg.Maximized = WindowState == FormWindowState.Maximized;
+            var b = cfg.Maximized ? RestoreBounds : Bounds;
+            cfg.Window = [b.X, b.Y, b.Width, b.Height];
+        }
         cfg.Save();
         base.OnFormClosing(e);
     }
