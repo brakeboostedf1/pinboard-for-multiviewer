@@ -1,60 +1,85 @@
-// Pinboard: MultiViewer windows on boards; one board on screen at a time, the others parked off screen.
+// Pinboard for MultiViewer: MultiViewer windows on boards; one board on screen at a time, the others parked off screen.
 using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
+[assembly: DefaultDllImportSearchPaths(DllImportSearchPath.System32)] // never load a DLL from the exe's folder
+
 static class Program
 {
+    public const string Name = "Pinboard for MultiViewer";
     public static readonly uint HowTo = N.RegisterWindowMessage("Pinboard.Front"), QuitMsg = N.RegisterWindowMessage("Pinboard.Quit");
-    // Per-user folder for log and How-to choice; nothing personal ships in the app folder.
-    public static readonly string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pinboard");
+    // Per-user folder: settings, log, How-to choice. Nothing personal goes in the install folder.
+    public static readonly string Data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Name);
 
     [STAThread]
     static int Main(string[] args)
     {
-        Directory.CreateDirectory(Data);
-        if (args.Contains("--selftest")) return Geo.SelfTest(Path.Combine(Data, "selftest.txt"));
+        N.SetDefaultDllDirectories(0x800); // LOAD_LIBRARY_SEARCH_SYSTEM32: setup runs as admin from Downloads
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
-        if (args.Contains("--uninstall")) return Setup.Remove();
+        if (args.Contains("--uninstall")) return Setup.Remove(args);
         if (args.Contains("--install")) return Setup.Packaged() ? Setup.FromArgs(args) : 1;
         if (Setup.IsSetup(args)) return Setup.Packaged() ? Setup.Show() : 1;
+        Directory.CreateDirectory(Data);
+        if (args.Contains("--selftest")) return Geo.SelfTest(Path.Combine(Data, "selftest.txt"));
         using var one = new Mutex(true, "MVPinboard", out bool first);
         if (!first) { N.AllowSetForegroundWindow(-1); N.PostMessage(0xFFFF, HowTo, 0, 0); return 0; } // already running: it comes to the front
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += (_, e) => Log(e.Exception);
-        N.timeBeginPeriod(1);
         var cfg = Cfg.Load();
         Help.AtStart();
         Application.Run(new Board(cfg));
         return 0;
     }
 
-    public static void Log(Exception e) =>
-        File.AppendAllText(Path.Combine(Data, "pinboard.log"), $"{DateTime.Now:s} {e}\n\n");
+    // Log starts again past 1 MB.
+    public static void Log(Exception e)
+    {
+        var p = Path.Combine(Data, "pinboard.log");
+        try
+        {
+            if (File.Exists(p) && new FileInfo(p).Length > 1 << 20) File.Delete(p);
+            File.AppendAllText(p, $"{DateTime.Now:s} {e}\n\n");
+        }
+        catch (IOException) { }
+    }
 }
 
-// Boards: board count. SlideMs: carousel time [ms]. Back: frame colour. ArrowHideMs: arrows hide after the cursor stops [ms].
-// Skip: titles Pinboard leaves alone (MultiViewer main window).
+// Settings file: Data\settings.json, written with defaults on first start. Out-of-range values are pulled into range.
 class Cfg
 {
-    public int Boards { get; set; } = 4;
-    public int SlideMs { get; set; } = 350;
-    public string Back { get; set; } = "#101014";
-    public int ArrowHideMs { get; set; } = 2000;
-    public int HoldMs { get; set; } = 300; // hold a dragged window over an arrow this long to carry it to that board [ms]
-    // Protect: video players show black in screenshots, screen sharing and the taskbar preview; timing windows stay visible.
-    public bool Protect { get; set; } = true;
-    public string Skip { get; set; } = "^(Home|[0-9]{4} .+) . MultiViewer$";
-    public string Monitor { get; set; } = ""; // monitor boards show on, e.g. \\.\DISPLAY2; empty = main monitor
+    public int Boards { get; set; } = 4;           // 1-4
+    public int SlideMs { get; set; } = 350;        // slide time [ms]; 0 = no slide
+    public string Back { get; set; } = "#101014";  // board colour
+    public int ArrowHideMs { get; set; } = 2000;   // arrows hide after the cursor stops [ms]
+    public int HoldMs { get; set; } = 300;         // hold a dragged window over an arrow this long to carry it [ms]
+    public bool Protect { get; set; } = true;      // video players show black in screen captures; timing windows stay visible
+    public string Monitor { get; set; } = "";      // monitor boards show on, e.g. \\.\DISPLAY2; empty = main monitor
+    public string Skip { get; set; } = "^(Home|[0-9]{4} .+) . MultiViewer$"; // titles Pinboard leaves alone (MultiViewer main window)
+
+    public static string File => Path.Combine(Program.Data, "settings.json");
 
     public static Cfg Load()
     {
-        var p = Path.Combine(AppContext.BaseDirectory, "pinboard.json");
-        try { return File.Exists(p) ? JsonSerializer.Deserialize<Cfg>(File.ReadAllText(p))! : new(); }
-        catch (Exception e) { MessageBox.Show($"pinboard.json not read, defaults used.\n{e.Message}", "Pinboard"); return new(); }
+        Cfg c, d = new();
+        try
+        {
+            var o = new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }; // "+" stays "+"
+            if (!System.IO.File.Exists(File)) System.IO.File.WriteAllText(File, JsonSerializer.Serialize(d, o));
+            c = JsonSerializer.Deserialize<Cfg>(System.IO.File.ReadAllText(File)) ?? d;
+        }
+        catch (Exception e) { MessageBox.Show($"settings.json not read, defaults used.\n{e.Message}", Program.Name); c = d; }
+        c.Boards = Math.Clamp(c.Boards, 1, 4);
+        c.SlideMs = Math.Clamp(c.SlideMs, 0, 2000);
+        c.HoldMs = Math.Clamp(c.HoldMs, 100, 3000);
+        c.ArrowHideMs = Math.Clamp(c.ArrowHideMs, 500, 10000);
+        c.Monitor ??= "";
+        try { if (ColorTranslator.FromHtml(c.Back).IsEmpty) c.Back = d.Back; } catch { c.Back = d.Back; }
+        try { _ = new Regex(c.Skip); } catch { c.Skip = d.Skip; }
+        return c;
     }
 }
 
@@ -63,10 +88,11 @@ class Board : Form
     const uint MoveOnly = 0x15; // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
     readonly Cfg cfg;
     readonly Regex skip;
-    readonly Rectangle scr, area;   // home monitor: the one boards show on
+    Rectangle scr, area;            // home monitor: the one boards show on
     Rectangle virt;                 // all monitors together
     Rectangle[] others = [];        // every monitor but home
-    readonly HashSet<IntPtr> win = [], pinned = [], restored = [];
+    HashSet<uint> mv = [];          // MultiViewer process ids
+    readonly HashSet<IntPtr> win = [], pinned = [], restored = [], hid = [];
     readonly N.ITaskbarList bar = (N.ITaskbarList)new N.TaskbarList();
     readonly Arrow left = new(false), right = new(true);
     readonly Dictionary<IntPtr, Shield> shields = [];
@@ -80,20 +106,17 @@ class Board : Form
     IntPtr drag;
     long holdFrom;
     int cur, ticks, holdSide;
-    bool busy, listPending;
+    bool busy, listPending, keys;
 
     public Board(Cfg c)
     {
         cfg = c;
-        skip = new(c.Skip);
-        var home = Screen.AllScreens.FirstOrDefault(s => s.DeviceName == c.Monitor) ?? Screen.PrimaryScreen!;
-        (scr, area) = (home.Bounds, home.WorkingArea);
-        Monitors();
-        Text = "Pinboard";
+        skip = new(c.Skip, RegexOptions.None, TimeSpan.FromMilliseconds(50));
+        Text = Program.Name;
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
-        Bounds = area; // full screen would hide the taskbar
         BackColor = ColorTranslator.FromHtml(c.Back);
+        Monitors();
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         bar.HrInit();
 
@@ -102,37 +125,66 @@ class Board : Form
 
         menu.Opening += (_, _) => Fill();
         Fill();
-        tray.Icon = Icon; tray.Text = "Pinboard"; tray.ContextMenuStrip = menu; tray.Visible = true;
+        tray.Icon = Icon; tray.Text = Program.Name; tray.ContextMenuStrip = menu; tray.Visible = true;
         tray.DoubleClick += (_, _) => Help.Open();
-        tray.ShowBalloonTip(3000, "Pinboard running", "Ctrl+Alt+↑ or tray icon: menu and how to use.", ToolTipIcon.None);
 
         onEvent = OnEvent;
+        // 60 Hz while MultiViewer windows are open (edge arrows, drags); 2 Hz while waiting for them.
         tick.Tick += (_, _) =>
         {
-            if (ticks++ % 30 == 0) Scan();
+            if (win.Count == 0 || ticks++ % 30 == 0) Scan();
+            tick.Interval = win.Count == 0 ? 500 : 16;
+            if (win.Count == 0) return;
             if (ticks % 60 == 0) N.DwmInvalidateIconicBitmaps(Handle); // preview refreshes when shown
             if (listPending && ModifierKeys == Keys.None) { listPending = false; N.SetForegroundWindow(Handle); menu.Show(Cursor.Position); }
             Back(); Hover(); Guard();
         };
         tick.Start();
         _ = Handle; // hotkeys and hooks need it before the frame first shows
+        ShowHidden();
     }
 
-    // Borderless forms need these to minimize from the taskbar.
+    // MINIMIZEBOX | SYSMENU: borderless forms need them to minimize from the taskbar.
+    // LAYERED: Windows keeps the board colour itself (Paint), so the board never shows the screen behind it.
     protected override CreateParams CreateParams
-    { get { var p = base.CreateParams; p.Style |= 0x20000 | 0x80000; return p; } }
+    { get { var p = base.CreateParams; p.Style |= 0x20000 | 0x80000; p.ExStyle |= 0x80000; return p; } }
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        uint k = 0x4000 | 0x2 | 0x1; // NOREPEAT | CTRL | ALT
-        Key(1, k, 0x25); Key(2, k, 0x27); Key(3, k, 0x26); Key(4, k, 0x28); // Ctrl+Alt + ← → ↑ ↓
+        Paint();
         int on = 1; // taskbar preview drawn by Pinboard: the board on screen
         N.DwmSetWindowAttribute(Handle, 7, ref on, 4);  // DWMWA_FORCE_ICONIC_REPRESENTATION
         N.DwmSetWindowAttribute(Handle, 10, ref on, 4); // DWMWA_HAS_ICONIC_BITMAP
         hooks[0] = N.SetWinEventHook(0x16, 0x17, 0, onEvent, 0, 0, 0); // MINIMIZESTART..END
         hooks[1] = N.SetWinEventHook(0x03, 0x03, 0, onEvent, 0, 0, 0); // FOREGROUND
         hooks[2] = N.SetWinEventHook(0x0A, 0x0B, 0, onEvent, 0, 0, 0); // MOVESIZESTART..END
+    }
+
+    void Paint()
+    {
+        if (!IsHandleCreated || area.IsEmpty) return;
+        using var b = new Bitmap(area.Width, area.Height, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        using (var g = Graphics.FromImage(b)) g.Clear(BackColor);
+        Layer.Draw(Handle, b, area.Location);
+    }
+
+    // ---- Shortcuts: only while Pinboard or MultiViewer is in front, so other apps keep these keys ----
+
+    bool Mine(IntPtr fg)
+    {
+        N.GetWindowThreadProcessId(fg, out var p);
+        return p == Environment.ProcessId || mv.Contains(p);
+    }
+
+    void Hotkeys(bool on)
+    {
+        if (on == keys) return;
+        keys = on;
+        if (!on) { for (int i = 1; i <= 5; i++) N.UnregisterHotKey(Handle, i); return; }
+        const uint C = 0x4000 | 0x2, CS = C | 0x4; // NOREPEAT | CTRL (| SHIFT)
+        Key(1, C, 0x25); Key(2, C, 0x27); Key(3, C, 0x26); // Ctrl + ← → ↑
+        Key(4, CS, 0x25); Key(5, CS, 0x27);                // Ctrl+Shift + ← →
     }
 
     // A shortcut another app already holds cannot register; log it so it can be found.
@@ -150,8 +202,9 @@ class Board : Form
             {
                 case 1: Slide(-1); break;
                 case 2: Slide(1); break;
-                case 3: listPending = true; break; // menu opens once Ctrl/Alt are up: releasing Alt closes a menu
-                case 4: Fold(); break;
+                case 3: listPending = true; break; // menu opens once Ctrl is up
+                case 4: Send(-1); break;
+                case 5: Send(1); break;
             }
         if (m.Msg == Program.HowTo) Front();
         if (m.Msg == Program.QuitMsg) Close(); // setup or uninstall asks
@@ -159,9 +212,18 @@ class Board : Form
         base.WndProc(ref m);
     }
 
+    // Minimized boards hide their windows; restore first so every window comes back.
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        base.OnFormClosing(e);
+    }
+
     // Exit: every window back on screen, owner link and taskbar button restored.
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
+        foreach (var h in hid) N.ShowWindow(h, 4);
+        hid.Clear(); SaveHidden();
         foreach (var h in win)
         {
             if (!N.IsIconic(h)) ToScreen(h);
@@ -185,10 +247,12 @@ class Board : Form
     // Own every visible MultiViewer window except the main one; sort new ones onto boards; repair drift.
     void Scan()
     {
-        var pids = Process.GetProcessesByName("MultiViewer").Select(p => { using (p) return (uint)p.Id; }).ToHashSet();
+        mv = Process.GetProcessesByName("MultiViewer").Select(p => { using (p) return (uint)p.Id; }).ToHashSet();
         bool was = win.Count > 0;
         Monitors();
         win.RemoveWhere(h => !N.IsWindow(h));
+        hid.RemoveWhere(h => !N.IsWindow(h));
+        if (drag != 0 && !N.IsWindow(drag)) drag = 0;
         foreach (var h in at.Keys.Where(h => !win.Contains(h)).ToList()) at.Remove(h);
         // main window can change title; a window put on another monitor leaves the boards
         foreach (var h in win.Where(h => skip.IsMatch(N.Title(h)) || Elsewhere(h)).ToList()) Release(h);
@@ -196,7 +260,7 @@ class Board : Form
         N.EnumWindows((h, _) =>
         {
             N.GetWindowThreadProcessId(h, out var p);
-            if (!pids.Contains(p) || !N.IsWindowVisible(h) || win.Contains(h)) return true;
+            if (!mv.Contains(p) || !N.IsWindowVisible(h) || win.Contains(h)) return true;
             var t = N.Title(h);
             if (t.Length == 0 || skip.IsMatch(t) || Elsewhere(h)) return true;
             win.Add(h);
@@ -207,16 +271,25 @@ class Board : Form
             if ((N.GetWindowLongPtr(h, -20) & 0x8) != 0 || (N.GetWindowLongPtr(h, -16) & 0xC00000) == 0) pinned.Add(h);
             return true;
         }, 0);
+        var used = win.Where(h => !N.IsIconic(h)).Select(Zone).Where(k => k >= 0 && k < cfg.Boards).ToHashSet();
+        int free = Enumerable.Range(0, cfg.Boards).Where(k => !used.Contains(k)).DefaultIfEmpty(-1).First();
         if (!was && win.Count > 0)
         {
             // first windows: the board on screen is the first board whose parking place is empty
-            var used = win.Select(Zone).Where(k => k >= 0).ToHashSet();
-            cur = Enumerable.Range(0, cfg.Boards).FirstOrDefault(k => !used.Contains(k));
+            cur = Math.Max(0, free);
             Visible = true;
+        }
+        // A MultiViewer setup opens windows on screen for the board that showed at save, the rest in their parking places.
+        // A window landing in the parking place of the board on screen: the setup was saved on another board, so take an empty one.
+        else if (free >= 0 && fresh.Any(h => !N.IsIconic(h) && Zone(h) == cur))
+        {
+            foreach (var (h, p) in at.Where(a => a.Value.Board == cur).ToList()) at[h] = p with { Board = free };
+            cur = free;
         }
         foreach (var h in fresh) Sort(h);
         if (!busy && drag == 0) foreach (var h in win.ToList()) Keep(h);
         if (was && win.Count == 0) Hide();
+        Hotkeys(Mine(N.GetForegroundWindow()));
     }
 
     // New window: on screen joins the board on screen; in a parking place joins that board.
@@ -242,10 +315,11 @@ class Board : Form
     // Repair: on-screen windows update their place; parked ones go back to theirs.
     void Keep(IntPtr h)
     {
-        if (N.IsIconic(h) || !at.TryGetValue(h, out var p)) return;
+        if (hid.Contains(h) || N.IsIconic(h) || !at.TryGetValue(h, out var p)) return;
         N.GetWindowRect(h, out var r);
         bool home = Zone(h) == -1;
         if (p.Board == cur) { if (home) at[h] = p with { X = r.L, Y = r.T }; else Sort(h); return; }
+        if (Full(h)) { Conceal(h); return; } // made full screen while parked: MultiViewer pulls it on screen
         if (home) { at[h] = new(cur, r.L, r.T); return; } // brought on screen (MultiViewer or user): it joins this board
         int x = p.X + Park(p.Board);
         if (r.L != x || r.T != p.Y) N.SetWindowPos(h, 0, x, p.Y, 0, 0, MoveOnly);
@@ -253,27 +327,71 @@ class Board : Form
 
     void Release(IntPtr h)
     {
+        if (hid.Remove(h)) { N.ShowWindow(h, 4); SaveHidden(); }
         win.Remove(h); pinned.Remove(h); at.Remove(h);
         N.SetWindowLongPtr(h, -8, 0);
         bar.AddTab(h);
     }
 
+    // Home monitor read again on every scan: a monitor plugged in, removed or rescaled moves the boards with it.
     void Monitors()
     {
+        var home = Screen.AllScreens.FirstOrDefault(s => s.DeviceName == cfg.Monitor) ?? Screen.PrimaryScreen!;
+        if (home.Bounds != scr || home.WorkingArea != area)
+        {
+            (scr, area) = (home.Bounds, home.WorkingArea);
+            Bounds = area; // full screen would hide the taskbar
+            Paint();
+        }
         others = Screen.AllScreens.Select(s => s.Bounds).Where(b => b != scr).ToArray();
         virt = others.Aggregate(scr, Rectangle.Union);
     }
 
     static Point Center(IntPtr h) { N.GetWindowRect(h, out var r); return new((r.L + r.R) / 2, (r.T + r.B) / 2); }
 
-    // Centre on a monitor other than home: the user keeps it there, outside the boards.
-    bool Elsewhere(IntPtr h) => !N.IsIconic(h) && others.Any(o => o.Contains(Center(h)));
+    // Centre on a monitor other than home: the user keeps it there, outside the boards. Parked windows never count.
+    bool Elsewhere(IntPtr h) =>
+        !N.IsIconic(h) && !(at.TryGetValue(h, out var p) && p.Board != cur) && others.Any(o => o.Contains(Center(h)));
 
     int Zone(IntPtr h) => Geo.Region(Center(h).X, scr, virt);
 
     int Park(int k) => Geo.Park(k, scr, virt);
 
     bool OnBoard(IntPtr h) => at.TryGetValue(h, out var p) && p.Board == cur && !N.IsIconic(h);
+
+    // Full screen: covers the home monitor, no title bar. MultiViewer puts such a window back on screen
+    // when it is moved, so while its board is away it hides instead of parking.
+    bool Full(IntPtr h)
+    {
+        N.GetWindowRect(h, out var r);
+        return (N.GetWindowLongPtr(h, -16) & 0xC00000) == 0 && r.L <= scr.Left && r.T <= scr.Top && r.R >= scr.Right && r.B >= scr.Bottom;
+    }
+
+    void Conceal(IntPtr h) { N.ShowWindow(h, 0); hid.Add(h); SaveHidden(); }   // SW_HIDE
+    void Reveal(IntPtr h) { N.ShowWindow(h, 4); hid.Remove(h); SaveHidden(); }  // SW_SHOWNOACTIVATE
+
+    // Hidden windows are written down: after a crash the next start shows them again.
+    static string HidFile => Path.Combine(Program.Data, "hidden.txt");
+
+    void SaveHidden()
+    {
+        try { if (hid.Count == 0) File.Delete(HidFile); else File.WriteAllLines(HidFile, hid.Select(h => ((long)h).ToString())); }
+        catch (IOException) { }
+    }
+
+    void ShowHidden()
+    {
+        if (!File.Exists(HidFile)) return;
+        var ids = Process.GetProcessesByName("MultiViewer").Select(p => { using (p) return (uint)p.Id; }).ToHashSet();
+        foreach (var s in File.ReadAllLines(HidFile))
+        {
+            if (!long.TryParse(s, out var v)) continue;
+            var h = (IntPtr)v;
+            N.GetWindowThreadProcessId(h, out var p);
+            if (N.IsWindow(h) && ids.Contains(p) && !N.IsWindowVisible(h) && Regex.IsMatch(N.Title(h), " . MultiViewer$")) N.ShowWindow(h, 4);
+        }
+        File.Delete(HidFile);
+    }
 
     // Put a window on the board on screen at its remembered place.
     void ToScreen(IntPtr h)
@@ -294,11 +412,14 @@ class Board : Form
     {
         if (busy || cfg.Boards < 2) return;
         busy = true;
+        N.timeBeginPeriod(1); // 15 ms frames need a fine system timer, only while sliding
         int to = Wrap(cur + dir), W = scr.Width;
-        var from = at.Where(a => a.Value.Board == cur && a.Key != keep && !N.IsIconic(a.Key)).ToArray();
-        var into = at.Where(a => a.Value.Board == to && !N.IsIconic(a.Key)).ToArray();
+        var leaving = at.Where(a => a.Value.Board == cur && a.Key != keep && !N.IsIconic(a.Key)).ToArray();
+        foreach (var (h, _) in leaving.Where(a => Full(a.Key))) Conceal(h);
+        var from = leaving.Where(a => !hid.Contains(a.Key)).ToArray();
+        var into = at.Where(a => a.Value.Board == to && !N.IsIconic(a.Key) && !hid.Contains(a.Key)).ToArray();
         // A monitor beside home would show the windows passing over it: then the board swaps without a slide.
-        bool slide = Geo.CanSlide(scr, others);
+        bool slide = cfg.SlideMs > 0 && Geo.CanSlide(scr, others);
         if (slide) foreach (var (h, p) in into) N.SetWindowPos(h, 0, p.X + dir * W, p.Y, 0, 0, MoveOnly); // line up beside the screen
         var sw = Stopwatch.StartNew();
         for (double t = slide ? 0 : 1; t < 1;)
@@ -317,10 +438,25 @@ class Board : Form
         if (slide) Thread.Sleep(120);
         foreach (var (h, p) in from) N.SetWindowPos(h, 0, p.X + Park(cur), p.Y, 0, 0, MoveOnly);
         foreach (var (h, p) in into) N.SetWindowPos(h, 0, p.X, p.Y, 0, 0, MoveOnly);
+        foreach (var h in hid.Where(h => at.TryGetValue(h, out var p) && p.Board == to).ToList()) Reveal(h);
         if (keep != 0 && at.TryGetValue(keep, out var kp)) at[keep] = kp with { Board = to };
         cur = to;
         Raise();
+        N.timeEndPeriod(1);
         busy = false;
+    }
+
+    // Window in front goes to the board left (dir -1) or right (+1); the board on screen stays.
+    void Send(int dir)
+    {
+        var h = N.GetForegroundWindow();
+        if (busy || cfg.Boards < 2 || !OnBoard(h)) return;
+        int to = Wrap(cur + dir);
+        N.GetWindowRect(h, out var r);
+        bool full = Full(h);
+        at[h] = full ? at[h] with { Board = to } : new(to, r.L, r.T);
+        if (full) Conceal(h); else N.SetWindowPos(h, 0, r.L + Park(to), r.T, 0, 0, MoveOnly);
+        N.SetForegroundWindow(Handle); // shortcuts keep working
     }
 
     // Windows of the board on screen sit above every other board's windows, in their own order.
@@ -333,12 +469,10 @@ class Board : Form
         Pin(N.GetForegroundWindow());
     }
 
-    void Fold() => WindowState = WindowState == FormWindowState.Minimized ? FormWindowState.Normal : FormWindowState.Minimized;
-
     // Started again while running: bring the boards to the front, as apps do.
     void Front()
     {
-        if (win.Count == 0) { tray.ShowBalloonTip(3000, "Pinboard running", "Open streams in MultiViewer. Ctrl+Alt+↑: menu.", ToolTipIcon.None); return; }
+        if (win.Count == 0) { tray.ShowBalloonTip(3000, Program.Name, "Open a setup or stream in MultiViewer.", ToolTipIcon.None); return; }
         WindowState = FormWindowState.Normal;
         N.SetForegroundWindow(Handle);
         Raise();
@@ -360,7 +494,7 @@ class Board : Form
     {
         try
         {
-            if (ev == 0x03) Pin(h);
+            if (ev == 0x03) { Pin(h); Hotkeys(Mine(h)); }
             else if (o == 0 && win.Contains(h))
                 switch (ev)
                 {
@@ -395,28 +529,30 @@ class Board : Form
 
     void Fill()
     {
+        foreach (var i in menu.Items.Cast<ToolStripItem>().ToList()) i.Dispose();
         menu.Items.Clear();
-        menu.Items.Add(Theme.Header("Windows"));
+        menu.Items.Add(Theme.Header("Players"));
         var list = win.Select(h => (h, k: N.IsIconic(h) || !at.TryGetValue(h, out var p) ? int.MaxValue : p.Board))
             .OrderBy(w => w.k).ThenBy(w => N.Title(w.h));
         foreach (var (h, k) in list)
             menu.Items.Add(Theme.Item(Short(N.Title(h)), k == int.MaxValue ? "Minimized" : $"Board {k + 1}", () => Bring(h)));
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(Theme.Item("Previous board", "Ctrl+Alt+←", () => Slide(-1)));
-        menu.Items.Add(Theme.Item("Next board", "Ctrl+Alt+→", () => Slide(1)));
-        menu.Items.Add(Theme.Item("Minimize / restore", "Ctrl+Alt+↓", Fold));
+        menu.Items.Add(Theme.Item("Previous board", "Ctrl+←", () => Slide(-1)));
+        menu.Items.Add(Theme.Item("Next board", "Ctrl+→", () => Slide(1)));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(Theme.Item("How to use", "", Help.Open));
+        menu.Items.Add(Theme.Item("Settings", "", () => Process.Start(new ProcessStartInfo("notepad.exe", $"\"{Cfg.File}\"") { UseShellExecute = true })));
         menu.Items.Add(Theme.Item("Exit", "", Close));
     }
 
     static string Short(string title) => Regex.Replace(title, " . MultiViewer$", "");
 
-    // Restore if minimized, move onto the board on screen, put in front.
+    // Restore if minimized or hidden, move onto the board on screen, put in front.
     void Bring(IntPtr h)
     {
         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
         if (N.IsIconic(h)) { N.ShowWindow(h, 9); restored.Remove(h); bar.DeleteTab(h); } // SW_RESTORE
+        if (hid.Contains(h)) Reveal(h);
         ToScreen(h);
         N.SetForegroundWindow(h);
     }
@@ -434,6 +570,7 @@ class Board : Form
         foreach (var h in win.Where(IsPlayer))
         {
             if (!shields.TryGetValue(h, out var s)) shields[h] = s = new Shield(h);
+            if (!N.IsWindowVisible(h)) { s.Off(); continue; }
             N.GetWindowRect(h, out var r);
             s.Cover(Rectangle.FromLTRB(r.L, r.T, r.R, r.B));
         }
@@ -441,11 +578,11 @@ class Board : Form
 
     // ---- Taskbar preview: the board on screen ----
 
-    // MultiViewer players: caption, no system menu. Timing windows have a system menu; track map has no caption.
-    static bool IsPlayer(IntPtr h)
+    // MultiViewer players: caption (no caption in full screen), no system menu. Timing windows have a system menu; track map has no caption.
+    bool IsPlayer(IntPtr h)
     {
         long s = N.GetWindowLongPtr(h, -16);
-        return (s & 0xC00000) == 0xC00000 && (s & 0x80000) == 0;
+        return (s & 0x80000) == 0 && ((s & 0xC00000) == 0xC00000 || Full(h));
     }
 
     void Thumb(int maxW, int maxH)
@@ -457,7 +594,7 @@ class Board : Form
             var order = new List<IntPtr>();
             N.EnumWindows((h, _) => { if (win.Contains(h)) order.Add(h); return true; }, 0);
             order.Reverse(); // bottom of z-order first
-            foreach (var h in order.Where(OnBoard))
+            foreach (var h in order.Where(h => OnBoard(h) && !hid.Contains(h)))
             {
                 N.GetWindowRect(h, out var r);
                 var to = new Rectangle(r.L - area.X, r.T - area.Y, r.R - r.L, r.B - r.T);
@@ -487,18 +624,18 @@ class Board : Form
         lastCursor = p;
         int y = area.Y + area.Height / 2 - Arrow.H / 2;
         Point lp = new(scr.Left, y), rp = new(scr.Right - Arrow.W, y);
-        bool canL = cfg.Boards > 1, canR = canL; // boards loop
+        bool can = cfg.Boards > 1; // boards loop
         if (drag != 0)
         {
-            left.Hold(canL, lp); right.Hold(canR, rp);
-            int side = canL && left.Box.Contains(p) ? -1 : canR && right.Box.Contains(p) ? 1 : 0;
+            left.Hold(can, lp); right.Hold(can, rp);
+            int side = can && left.Box.Contains(p) ? -1 : can && right.Box.Contains(p) ? 1 : 0;
             if (side != holdSide) { holdSide = side; holdFrom = Environment.TickCount64; }
             else if (side != 0 && Environment.TickCount64 - holdFrom >= cfg.HoldMs) { Slide(side, drag); holdFrom = Environment.TickCount64; }
             return;
         }
         bool ours = WindowState != FormWindowState.Minimized && Ours(N.GetForegroundWindow());
-        left.Track(ours && canL, lp, p, moved, p.X <= scr.Left + 3, cfg.ArrowHideMs);
-        right.Track(ours && canR, rp, p, moved, p.X >= scr.Right - 4, cfg.ArrowHideMs);
+        left.Track(ours && can, lp, p, moved, p.X <= scr.Left + 3, cfg.ArrowHideMs);
+        right.Track(ours && can, rp, p, moved, p.X >= scr.Right - 4, cfg.ArrowHideMs);
     }
 }
 
@@ -530,6 +667,7 @@ static class Geo
         var layouts = new (string Name, Rectangle Home, Rectangle[] Others, bool Slide)[]
         {
             ("one monitor 1920", new(0, 0, 1920, 1080), [], true),
+            ("one monitor 4K", new(0, 0, 3840, 2160), [], true),
             ("second monitor right", new(0, 0, 1920, 1080), [new(1920, 0, 2560, 1440)], false),
             ("second monitor left", new(0, 0, 1920, 1080), [new(-1920, 0, 1920, 1080)], false),
             ("second monitor above, offset", new(0, 0, 1920, 1080), [new(500, -1080, 1920, 1080)], true),
@@ -559,6 +697,7 @@ static class Geo
                     int seen = mons.Max(m => Rectangle.Intersect(m, h).Width);
                     Check(Region(hcx, home, virt) == k, $"  board {k + 1} parked: reads back as board {k + 1}");
                     Check(seen <= 8, $"  board {k + 1} parked: at most 8 px on any monitor (got {seen})");
+                    Check(h.Right < 32000, $"  board {k + 1} parked: inside Windows' coordinate limit");
                 }
             }
         }
@@ -644,17 +783,21 @@ static class Help
     static readonly (string, (string, string)[])[] Rows =
     [
         ("How to use", [
-            ("1  Start", "Open Pinboard and MultiViewer, any order. Open streams and timing as usual."),
-            ("2  Change board", "Move mouse to left or right screen edge. Click arrow. Boards loop."),
-            ("3  Move a window", "Drag window. Hold it over arrow: board changes, window comes along."),
-            ("4  Save layout", "In MultiViewer, save setup while board 1 shows. Open it with Pinboard running, on board 1: every window returns to its board."),
-            ("5  Find a window", "Ctrl+Alt+↑ or tray icon. Click window: it comes to this board."),
-            ("6  Exit", "Ctrl+Alt+↑ → Exit. All windows come back on screen."),
+            ("1  Start", "Open Pinboard and MultiViewer. Pinboard waits in system tray. It shows in taskbar when your setup opens."),
+            ("2  Change board", "Click arrow at left or right screen edge. Up to 4 boards."),
+            ("3  Move player", "Drag player onto arrow and hold. Or press Ctrl+Shift+← / →: player in front goes to previous / next board."),
+            ("4  Save", "Arrange boards, then save setup in MultiViewer. Setup opens with each player on its board."),
+            ("5  Find player", "Player lost or minimized: press Ctrl+↑, or right-click tray icon. Click player: it comes back on this board."),
         ]),
-        ("Shortcuts", [
-            ("Ctrl+Alt+← / →", "Previous / next board"),
-            ("Ctrl+Alt+↑", "Menu: windows, help, exit"),
-            ("Ctrl+Alt+↓", "Minimize / restore all boards"),
+        ("Shortcuts (Pinboard or MultiViewer in front)", [
+            ("Ctrl+← / →", "Previous / next board"),
+            ("Ctrl+Shift+← / →", "Send player to previous / next board"),
+            ("Ctrl+↑", "Player list and menu"),
+        ]),
+        ("Settings", [
+            ("MultiViewer", "No settings needed."),
+            ("Windows", "Player snaps to half screen at arrow: turn off Settings > System > Multitasking > Snap windows."),
+            ("Pinboard", "Tray icon > Settings. Restart Pinboard after a change."),
         ]),
     ];
 
@@ -670,7 +813,7 @@ static class Help
         if (card is { IsDisposed: false }) { card.Activate(); return; }
         card = new Form
         {
-            Text = "Pinboard", FormBorderStyle = FormBorderStyle.FixedSingle, MaximizeBox = false, MinimizeBox = false,
+            Text = "How to use", FormBorderStyle = FormBorderStyle.FixedSingle, MaximizeBox = false, MinimizeBox = false,
             StartPosition = FormStartPosition.CenterScreen, BackColor = Theme.Window, ForeColor = Theme.Text,
             AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Padding = new(24, 16, 24, 20), TopMost = true,
             KeyPreview = true, ShowInTaskbar = false, Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath),
@@ -683,7 +826,7 @@ static class Help
             foreach (var (k, v) in rows)
             {
                 t.Controls.Add(new Label { Text = k, Font = Theme.Strong, ForeColor = Theme.Text, AutoSize = true, Margin = new(0, 4, 24, 4) });
-                t.Controls.Add(new Label { Text = v, Font = Theme.Body, ForeColor = Theme.Soft, AutoSize = true, Margin = new(0, 4, 0, 4) });
+                t.Controls.Add(new Label { Text = v, Font = Theme.Body, ForeColor = Theme.Soft, AutoSize = true, MaximumSize = new(560, 0), Margin = new(0, 4, 0, 4) });
             }
         }
         // Bottom row: start-up choice left, Close right.
@@ -706,6 +849,7 @@ static class Help
         card.Controls.Add(t);
         card.KeyDown += (_, e) => { if (e.KeyCode == Keys.Escape) card.Close(); };
         card.HandleCreated += (_, _) => Theme.DarkTitle(card);
+        card.FormClosed += (_, _) => card.Icon?.Dispose();
         card.Show();
     }
 }
@@ -737,6 +881,13 @@ class Layer : Form
 
     public void Put(Bitmap b, Point at)
     {
+        Draw(Handle, b, at);
+        if (!On) { N.ShowWindow(Handle, 4); On = true; } // SW_SHOWNOACTIVATE
+    }
+
+    // Hands a bitmap to a layered window; Windows keeps and shows it without asking the window to paint.
+    public static void Draw(IntPtr h, Bitmap b, Point at)
+    {
         var scr = N.GetDC(0);
         var mem = N.CreateCompatibleDC(scr);
         var hb = b.GetHbitmap(Color.FromArgb(0));
@@ -744,9 +895,8 @@ class Layer : Form
         var size = new Size(b.Width, b.Height);
         var src = Point.Empty;
         var blend = new N.Blend { alpha = 255, format = 1 }; // AC_SRC_ALPHA
-        N.UpdateLayeredWindow(Handle, scr, ref at, ref size, mem, ref src, 0, ref blend, 2);
+        N.UpdateLayeredWindow(h, scr, ref at, ref size, mem, ref src, 0, ref blend, 2);
         N.SelectObject(mem, old); N.DeleteObject(hb); N.DeleteDC(mem); N.ReleaseDC(0, scr);
-        if (!On) { N.ShowWindow(Handle, 4); On = true; } // SW_SHOWNOACTIVATE
     }
 
     public void Off() { if (On) { N.ShowWindow(Handle, 0); On = false; } }
@@ -787,6 +937,8 @@ class Shield : Form
         N.SetWindowPos(Handle, 0, r.X, r.Y, r.Width, r.Height, 0x14 | (on ? 0u : 0x40)); // NOZORDER | NOACTIVATE (| SHOWWINDOW)
         on = true;
     }
+
+    public void Off() { if (on) { N.ShowWindow(Handle, 0); on = false; } }
 }
 
 // Edge arrow: clear box, every pixel of it clickable, white chevron with dark edge.
@@ -871,6 +1023,7 @@ static class N
     [DllImport(U)] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport(U)] public static extern bool AllowSetForegroundWindow(int pid);
     [DllImport(U)] public static extern bool RegisterHotKey(IntPtr h, int id, uint m, uint vk);
+    [DllImport(U)] public static extern bool UnregisterHotKey(IntPtr h, int id);
     [DllImport(U)] public static extern IntPtr SetWinEventHook(uint a, uint b, IntPtr m, WinEvent f, uint p, uint t, uint fl);
     [DllImport(U)] public static extern bool UnhookWinEvent(IntPtr h);
     [DllImport(U)] public static extern bool SetWindowDisplayAffinity(IntPtr h, uint a);
@@ -888,4 +1041,6 @@ static class N
     [DllImport(D)] public static extern int DwmSetIconicThumbnail(IntPtr h, IntPtr bmp, uint f);
     [DllImport(D)] public static extern int DwmInvalidateIconicBitmaps(IntPtr h);
     [DllImport("winmm.dll")] public static extern uint timeBeginPeriod(uint p);
+    [DllImport("winmm.dll")] public static extern uint timeEndPeriod(uint p);
+    [DllImport("kernel32.dll")] public static extern bool SetDefaultDllDirectories(uint f);
 }

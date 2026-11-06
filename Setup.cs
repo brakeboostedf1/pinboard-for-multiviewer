@@ -1,31 +1,31 @@
-// Installer and uninstaller, built into Pinboard.exe. Run as "Pinboard-Setup.exe" (or with --setup) it installs;
-// Windows Settings > Apps runs "Pinboard.exe --uninstall". Per-user by default: no admin prompt unless the folder needs it.
+// Installer and uninstaller, built into Pinboard.exe.
+// Setup (exe name contains "setup", or --setup): wizard runs as the user; files go to Program Files for all users
+// through one admin prompt (--install). Uninstall (Windows Settings > Apps) runs "Pinboard.exe --uninstall".
+// Only Pinboard's own files are ever deleted; a folder goes only when it is empty.
+using System.ComponentModel;
 using System.Diagnostics;
-using System.Text.Json;
 using Microsoft.Win32;
 
 static class Setup
 {
-    const string Name = "Pinboard for MultiViewer", Exe = "Pinboard.exe";
-    const string Uninstall = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Pinboard";
+    const string Name = Program.Name, Exe = "Pinboard.exe";
+    const string Entry = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\PinboardForMultiViewer";
     const string Run = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    static string DefaultDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Pinboard");
-    static string DesktopLink => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Pinboard.lnk");
-    static string MenuLink => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Pinboard.lnk");
+    static string DefaultDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Name);
+    static string DesktopLink => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory), Name + ".lnk");
+    static string MenuLink => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), Name + ".lnk");
     static string Version => Application.ProductVersion.Split('+')[0];
 
     // A development build needs Pinboard.dll beside it; installing it would leave a copy that cannot start.
     public static bool Packaged(bool say = true)
     {
         bool ok = !File.Exists(Path.Combine(AppContext.BaseDirectory, "Pinboard.dll"));
-        if (!ok && say) MessageBox.Show("This is a development build and cannot install.\nUse Pinboard-Setup.exe.", "Pinboard", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        if (!ok && say) MessageBox.Show("This is a development build and cannot install.\nUse the setup file.", Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
         return ok;
     }
 
     public static bool IsSetup(string[] args) =>
         args.Contains("--setup") || Path.GetFileNameWithoutExtension(Environment.ProcessPath!).Contains("setup", StringComparison.OrdinalIgnoreCase);
-
-    record Choice(string Dir, bool Desktop, bool Menu, bool AutoStart);
 
     // ---- Setup wizard ----
 
@@ -62,7 +62,8 @@ static class Setup
             var head = new Panel { Bounds = new(0, 0, 497, 58), BackColor = SystemColors.Window };
             head.Controls.Add(L(title, 24, 10, 380, bold));
             head.Controls.Add(L(sub, 40, 28, 380));
-            head.Controls.Add(new PictureBox { Bounds = new(433, 5, 48, 48), Image = Icon.ExtractIcon(Environment.ProcessPath!, 0, 48)!.ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom });
+            using (var small = Icon.ExtractIcon(Environment.ProcessPath!, 0, 48)!)
+                head.Controls.Add(new PictureBox { Bounds = new(433, 5, 48, 48), Image = small.ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom });
             p.Controls.Add(head);
             p.Controls.Add(new Label { Bounds = new(0, 58, 497, 2), BorderStyle = BorderStyle.Fixed3D });
             body = new Panel { Bounds = new(40, 72, 417, 230), BackColor = SystemColors.Control };
@@ -73,7 +74,7 @@ static class Setup
         var welcome = Side($"Welcome to the {Name} Setup Wizard",
             $"This will install {Name} {Version} on your computer.\n\nPinboard holds MultiViewer windows on boards. One board shows at a time.\n\nClick Next to continue, or Cancel to exit Setup.");
 
-        var where = Inner("Select Destination Location", "Where should Pinboard be installed?", out var b1);
+        var where = Inner("Select Destination Location", $"Where should {Name} be installed?", out var b1);
         b1.Controls.Add(L("Setup will install Pinboard into the following folder.\n\nTo continue, click Next. If you would like to select a different folder, click Browse.", 0, 0, 417));
         var dir = new TextBox { Text = Installed() ?? DefaultDir, Bounds = new(0, 74, 330, 23) };
         var browse = new Button { Text = "Browse...", Bounds = new(342, 73, 75, 23), FlatStyle = FlatStyle.System };
@@ -81,7 +82,7 @@ static class Setup
         {
             using var d = new FolderBrowserDialog { SelectedPath = dir.Text, UseDescriptionForTitle = true, Description = "Select install folder" };
             if (d.ShowDialog(f) == DialogResult.OK)
-                dir.Text = d.SelectedPath.EndsWith("Pinboard", StringComparison.OrdinalIgnoreCase) ? d.SelectedPath : Path.Combine(d.SelectedPath, "Pinboard");
+                dir.Text = d.SelectedPath.EndsWith(Name, StringComparison.OrdinalIgnoreCase) ? d.SelectedPath : Path.Combine(d.SelectedPath, Name);
         };
         b1.Controls.AddRange([dir, browse]);
         long mb = (new FileInfo(Environment.ProcessPath!).Length >> 20) + 1;
@@ -133,24 +134,27 @@ static class Setup
         back.Click += (_, _) => Go(page - 1);
         next.Click += (_, _) =>
         {
+            string d = dir.Text.Trim();
             switch (page)
             {
-                case 1 when !Path.IsPathFullyQualified(dir.Text.Trim()):
-                    MessageBox.Show(f, "You must enter a full path with drive letter.", f.Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                case 1 when !Path.IsPathFullyQualified(d) || d.IndexOfAny(['"', '%']) >= 0 || Path.GetPathRoot(d) == d:
+                    MessageBox.Show(f, "You must enter a full folder path with drive letter.", f.Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
                     return;
                 case 3:
-                    Go(4); Application.DoEvents();
-                    var ch = new Choice(dir.Text.Trim(), desk.Checked, menu.Checked, auto.Checked);
-                    try { Install(ch); }
-                    catch (UnauthorizedAccessException) when (Elevate(ch) == 0) { }
-                    catch (Exception e)
+                    Go(4);
+                    // Files and the all-users entry need admin rights: one admin prompt. Start with Windows is per user.
+                    var args = $"--install \"{d}\"" + (desk.Checked ? " --desktop" : "") + (menu.Checked ? " --menu" : "");
+                    var run = Task.Run(() => Admin(args));
+                    while (!run.IsCompleted) { Application.DoEvents(); Thread.Sleep(30); }
+                    if (run.Result != 0)
                     {
-                        MessageBox.Show(f, $"Setup could not install Pinboard in this folder.\n\n{e.Message}", f.Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        if (run.Result == 1223) MessageBox.Show(f, "Setup needs administrator rights to install Pinboard.", f.Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
                         Go(1); return;
                     }
+                    ForUser(Path.Combine(d, Exe), auto.Checked);
                     code = 0; Go(5); return;
                 case 5:
-                    if (launch.Checked) Process.Start(new ProcessStartInfo(Path.Combine(dir.Text.Trim(), Exe)) { UseShellExecute = true, WorkingDirectory = dir.Text.Trim() });
+                    if (launch.Checked) Process.Start(new ProcessStartInfo(Path.Combine(d, Exe)) { UseShellExecute = true, WorkingDirectory = d });
                     f.Close(); return;
             }
             Go(page + 1);
@@ -162,94 +166,152 @@ static class Setup
             e.Cancel = MessageBox.Show(f, "Setup is not complete. If you exit now, the program will not be installed.\n\nExit Setup?",
                 "Exit Setup", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes;
         };
-        Go(int.TryParse(Environment.GetEnvironmentVariable("PINBOARD_SETUP_PAGE"), out var p0) ? p0 : 0); // test aid: open on a page
+        Go(0);
         Application.Run(f);
         return code;
     }
 
-    // Folder needs admin rights: run the same install again as administrator.
-    static int Elevate(Choice c)
+    // Runs this exe again as administrator and waits. 1223: admin prompt declined.
+    static int Admin(string args)
     {
-        var a = $"--install \"{c.Dir}\"" + (c.Desktop ? " --desktop" : "") + (c.Menu ? " --menu" : "") + (c.AutoStart ? " --autostart" : "");
-        try { using var p = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, a) { UseShellExecute = true, Verb = "runas" })!; p.WaitForExit(); return p.ExitCode; }
-        catch { return 1; } // admin prompt declined
+        try
+        {
+            using var p = Process.Start(new ProcessStartInfo(Environment.ProcessPath!, args) { UseShellExecute = true, Verb = "runas" })!;
+            p.WaitForExit();
+            return p.ExitCode;
+        }
+        catch (Win32Exception e) { return e.NativeErrorCode; }
     }
 
-    // Silent install, used by the elevated run.
+    // Admin part of setup: files, shortcuts and uninstall entry for all users.
     public static int FromArgs(string[] a)
     {
         int i = Array.IndexOf(a, "--install");
-        Install(new(a[i + 1], a.Contains("--desktop"), a.Contains("--menu"), a.Contains("--autostart")));
-        return 0;
+        if (i + 1 >= a.Length) return 1;
+        try { Install(a[i + 1], a.Contains("--desktop"), a.Contains("--menu")); return 0; }
+        catch (Exception e)
+        {
+            MessageBox.Show($"Setup could not install Pinboard in this folder.\n\n{e.Message}", Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 2;
+        }
     }
 
-    static void Install(Choice c)
+    static void Install(string dir, bool desktop, bool menu)
     {
         Quit();
-        Directory.CreateDirectory(c.Dir);
-        string exe = Path.Combine(c.Dir, Exe);
+        Directory.CreateDirectory(dir);
+        string exe = Path.Combine(dir, Exe);
         if (!string.Equals(Path.GetFullPath(exe), Path.GetFullPath(Environment.ProcessPath!), StringComparison.OrdinalIgnoreCase))
             for (int n = 0; ; n++) // the old copy may take a moment to let go of its file
                 try { File.Copy(Environment.ProcessPath!, exe, true); break; }
                 catch (IOException) when (n < 20) { Thread.Sleep(250); }
-        string cfg = Path.Combine(c.Dir, "pinboard.json"); // keep a user's own settings on update
-        if (!File.Exists(cfg)) File.WriteAllText(cfg, JsonSerializer.Serialize(new Cfg(), new JsonSerializerOptions { WriteIndented = true }));
-        Link(DesktopLink, exe, c.Desktop);
-        Link(MenuLink, exe, c.Menu);
-        using (var run = Registry.CurrentUser.CreateSubKey(Run)) { if (c.AutoStart) run.SetValue("Pinboard", $"\"{exe}\""); else run.DeleteValue("Pinboard", false); }
-        using (var u = Registry.CurrentUser.CreateSubKey(Uninstall))
+        Link(DesktopLink, exe, desktop);
+        Link(MenuLink, exe, menu);
+        using var u = Registry.LocalMachine.CreateSubKey(Entry);
+        u.SetValue("DisplayName", Name);
+        u.SetValue("DisplayVersion", Version);
+        u.SetValue("Publisher", Name);
+        u.SetValue("DisplayIcon", exe);
+        u.SetValue("InstallLocation", dir);
+        u.SetValue("UninstallString", $"\"{exe}\" --uninstall");
+        u.SetValue("EstimatedSize", (int)(new FileInfo(exe).Length / 1024), RegistryValueKind.DWord);
+        u.SetValue("NoModify", 1, RegistryValueKind.DWord);
+        u.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+    }
+
+    // User part of setup: start with Windows, and Pinboard 1.0 (per user, named "Pinboard") removed.
+    static void ForUser(string exe, bool autoStart)
+    {
+        using (var run = Registry.CurrentUser.CreateSubKey(Run))
         {
-            u.SetValue("DisplayName", Name);
-            u.SetValue("DisplayVersion", Version);
-            u.SetValue("Publisher", "Pinboard");
-            u.SetValue("DisplayIcon", exe);
-            u.SetValue("InstallLocation", c.Dir);
-            u.SetValue("UninstallString", $"\"{exe}\" --uninstall");
-            u.SetValue("EstimatedSize", (int)(new FileInfo(exe).Length / 1024), RegistryValueKind.DWord);
-            u.SetValue("NoModify", 1, RegistryValueKind.DWord);
-            u.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+            if (autoStart) run.SetValue(Name, $"\"{exe}\""); else run.DeleteValue(Name, false);
+            run.DeleteValue("Pinboard", false);
         }
+        const string old = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Pinboard";
+        using (var u = Registry.CurrentUser.OpenSubKey(old))
+            if (u?.GetValue("InstallLocation") is string d && Directory.Exists(d))
+            {
+                Delete(d, "Pinboard.exe", "pinboard.json");
+                foreach (var l in new[] { Environment.SpecialFolder.DesktopDirectory, Environment.SpecialFolder.Programs })
+                {
+                    var lnk = Path.Combine(Environment.GetFolderPath(l), "Pinboard.lnk");
+                    if (File.Exists(lnk) && Target(lnk).StartsWith(d, StringComparison.OrdinalIgnoreCase)) File.Delete(lnk);
+                }
+            }
+        Registry.CurrentUser.DeleteSubKeyTree(old, false);
+        Delete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pinboard"), "pinboard.log", "help-hidden", "selftest.txt");
     }
 
     static string? Installed()
     {
-        using var u = Registry.CurrentUser.OpenSubKey(Uninstall);
+        using var u = Registry.LocalMachine.OpenSubKey(Entry);
         return u?.GetValue("InstallLocation") as string;
     }
+
+    static dynamic Shell() => Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
+
+    static string Target(string lnk) { try { return (string)Shell().CreateShortcut(lnk).TargetPath; } catch { return ""; } }
 
     static void Link(string at, string target, bool want)
     {
         if (!want) { File.Delete(at); return; }
         Directory.CreateDirectory(Path.GetDirectoryName(at)!);
-        dynamic shell = Activator.CreateInstance(Type.GetTypeFromProgID("WScript.Shell")!)!;
-        dynamic l = shell.CreateShortcut(at);
+        dynamic l = Shell().CreateShortcut(at);
         l.TargetPath = target; l.WorkingDirectory = Path.GetDirectoryName(target); l.Description = Name; l.IconLocation = target + ",0";
         l.Save();
     }
 
+    // Named files out of a folder, then the folder itself if nothing else is in it.
+    static void Delete(string dir, params string[] files)
+    {
+        try
+        {
+            foreach (var f in files) File.Delete(Path.Combine(dir, f));
+            if (Directory.Exists(dir) && !Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+    }
+
     // A running Pinboard exits cleanly (its windows come back on screen) so its file can be replaced or removed.
+    // Nothing is killed: a Pinboard that does not exit makes the file copy fail with a message.
     static void Quit()
     {
         N.PostMessage(0xFFFF, Program.QuitMsg, 0, 0);
         foreach (var p in Process.GetProcessesByName("Pinboard").Where(p => p.Id != Environment.ProcessId))
-            using (p) if (!p.WaitForExit(5000)) p.Kill();
+            using (p) p.WaitForExit(10000);
     }
 
     // ---- Uninstall ----
 
-    public static int Remove()
+    public static int Remove(string[] a)
     {
-        if (MessageBox.Show($"Remove {Name}?\nMultiViewer and its setups stay as they are.", "Uninstall Pinboard",
+        if (a.Contains("--files")) return RemoveFiles();
+        if (MessageBox.Show($"Remove {Name}?\nMultiViewer and its setups stay as they are.", $"Uninstall {Name}",
                 MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return 1;
         Quit();
-        string dir = AppContext.BaseDirectory.TrimEnd('\\');
+        using (var run = Registry.CurrentUser.OpenSubKey(Run, true)) run?.DeleteValue(Name, false);
+        Delete(Program.Data, "settings.json", "pinboard.log", "help-hidden", "hidden.txt", "selftest.txt");
+        return Admin("--uninstall --files") == 0 ? 0 : 1;
+    }
+
+    // Admin part: only from the folder Setup recorded, only Pinboard's own file.
+    static int RemoveFiles()
+    {
+        string me = Path.GetDirectoryName(Environment.ProcessPath!)!.TrimEnd('\\');
+        if (!string.Equals(Installed()?.TrimEnd('\\'), me, StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show("Uninstall from Windows Settings > Apps.", Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return 1;
+        }
+        Quit();
         File.Delete(DesktopLink);
         File.Delete(MenuLink);
-        using (var run = Registry.CurrentUser.OpenSubKey(Run, true)) run?.DeleteValue("Pinboard", false);
-        Registry.CurrentUser.DeleteSubKeyTree(Uninstall, false);
-        try { Directory.Delete(Program.Data, true); } catch (IOException) { }
-        // This exe is still running: a short-lived cmd removes the folder once it has exited.
-        Process.Start(new ProcessStartInfo("cmd.exe", $"/c timeout /t 2 /nobreak >nul & rmdir /s /q \"{dir}\"") { CreateNoWindow = true, UseShellExecute = false });
+        Registry.LocalMachine.DeleteSubKeyTree(Entry, false);
+        // This exe is still running: a short-lived cmd deletes it once it has exited, then the folder if empty.
+        string sys = Environment.SystemDirectory;
+        Process.Start(new ProcessStartInfo(Path.Combine(sys, "cmd.exe"),
+            $"/d /c {Path.Combine(sys, "PING.EXE")} -n 3 127.0.0.1 >nul & del /f /q \"{Path.Combine(me, Exe)}\" & rmdir \"{me}\"")
+            { CreateNoWindow = true, UseShellExecute = false, WorkingDirectory = sys });
         return 0;
     }
 }
