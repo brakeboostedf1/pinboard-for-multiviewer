@@ -61,11 +61,11 @@ class Cfg
     public string Back { get; set; } = "#101014";                                // board colour
     public int ArrowHideMs { get; set; } = 2000;                                 // arrows hide after the cursor stops [ms]
     public int HoldMs { get; set; } = 300;                                       // hold a dragged player over an arrow this long [ms]
-    public int[] Window { get; set; } = [];                                      // board window x, y, w, h when not maximized [px]
-    public bool Maximized { get; set; } = true;
     public string OnExit { get; set; } = "ask";                                  // ask, keep (players stay open), close (players close too)
     [System.Text.Json.Serialization.JsonIgnore] public bool AutoStart { get; set; } // start with Windows: lives in the registry, not in this file
-    public string Skip { get; set; } = "^(Home|[0-9]{4} .+) . MultiViewer$";    // titles Pinboard leaves alone (MultiViewer main window)
+    // MultiViewer window titles (" . " matches its " — "). Main window and timing windows have the same window style, so titles tell them apart.
+    public string MainTitles { get; set; } = "^((Home|My List|Videos|Test replay sessions|FIA Documents .+|[0-9]{4} .+) . )?MultiViewer$"; // main window pages: it never goes on a board
+    public string TimingTitles { get; set; } = "^(Replay )?(Live Timing|Track Map|Race Control( Messages)?|Lap Time (Series|Chart)|Lap chart|Race Trace|Sectors Leaderboard|Speedtraps Leaderboard|Tyre Stints|Team Radio|Radio Transcriptions|Circle of Doom|Investigations Tracker|Track Limits|Telemetry Comparison|Driver of the Day|Live Championship Predictions|Stream Overlay Controller) . MultiViewer$"; // windows with a system menu that go on boards
 
     public static string File => Path.Combine(Program.Data, "settings.json");
     // Read and written by generated code (CfgJson), not reflection: works in the trimmed build.
@@ -98,10 +98,10 @@ class Cfg
         c.Names = Enumerable.Range(0, 4).Select(k => c.Names?.ElementAtOrDefault(k) ?? d.Names[k]).ToArray();
         c.Shortcuts ??= d.Shortcuts;
         foreach (var a in Hotkey.All) if (!c.Shortcuts.ContainsKey(a.Id)) c.Shortcuts[a.Id] = a.Default;
-        c.Window ??= [];
         if (c.OnExit is not ("ask" or "keep" or "close")) c.OnExit = d.OnExit;
         try { if (ColorTranslator.FromHtml(c.Back).IsEmpty) c.Back = d.Back; } catch { c.Back = d.Back; }
-        try { _ = new Regex(c.Skip); } catch { c.Skip = d.Skip; }
+        try { _ = new Regex(c.MainTitles); } catch { c.MainTitles = d.MainTitles; }
+        try { _ = new Regex(c.TimingTitles); } catch { c.TimingTitles = d.TimingTitles; }
         return c;
     }
 }

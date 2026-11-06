@@ -1,6 +1,6 @@
 # Pinboard for MultiViewer
 
-Pinboard forr MultiViewer puts the media players into a single tab in your Windows taskbar. Great for single monitor use. Up to 4 boards in one window. Change the board with the arrows at the edge, the dots in the title bar, or the keyboard.
+Pinboard for MultiViewer puts the media players into a single tab in your Windows taskbar. Great for single monitor use. Up to 4 boards in one window. Change the board with the arrows at the edge, the dots at the top of the screen, or the keyboard.
 
 Pinboard for MultiViewer is an add-on application. It is not an official F1 or MultiViewer product. It moves MultiViewer media players only. It does not change MultiViewer or its files.
 
@@ -9,7 +9,7 @@ Pinboard for MultiViewer is an add-on application. It is not an official F1 or M
 1. Open [Releases](../../releases/latest).
 2. Download `Pinboard-for-MultiViewer-Setup.exe`.
 
-You need Windows 10 or Windows 11, 64-bit, and [MultiViewerx](https://multiviewer.app/)
+You need Windows 10 or Windows 11, 64-bit, and [MultiViewer](https://multiviewer.app/).
 
 Windows can show "Windows protected your PC". The file has no code signature hence the warning. Select **More info**, then **Run anyway**.
 
@@ -36,9 +36,9 @@ Run `Pinboard-for-MultiViewer-Setup.exe`. Setup installs Pinboard in Program Fil
 ## How to use
 
 1. **Start.** Open Pinboard and MultiViewer. Pinboard waits in the system tray. It opens when your setup opens, on board 1.
-2. **Change board.** Click the arrow at the left or right edge, or click a dot in the title bar. In full screen, the dots are at the bottom.
+2. **Change board.** Click the arrow at the left or right edge, or click a dot at the top of the screen. The dots fade when a player is under them. Touch the top edge of the screen to show them again.
 3. **Move a player.** Drag the player onto an arrow and hold. Or press Ctrl+Shift+Left or Ctrl+Shift+Right: the player in front goes to the previous or next board.
-4. **Resize.** Drag the edges of Pinboard. The players scale with it and stay inside. F11: full screen.
+4. **Full screen.** Press F11: the board also covers the taskbar. Press F11 again to show the taskbar.
 5. **Save.** Arrange your boards, then save the setup in MultiViewer. The setup opens with each player on its board.
 6. **Find a player.** If a player is lost or minimized, press Ctrl+Up or click the tray icon. Click the player: it comes back on this board.
 

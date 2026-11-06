@@ -8,7 +8,7 @@ static class Theme
     public static readonly Color Title = Hex("#202020"), Side = Hex("#202020"), Main = Hex("#2a2a2a"), Hover = Hex("#333333"), Sel = Hex("#3a3a3a"),
         Line = Hex("#474747"), Outline = Hex("#5c5c5c"), Text = Color.White, Soft = Hex("#b3b3b3"), Muted = Hex("#8a8a8a"),
         Accent = Hex("#90caf9"), Red = Hex("#e10600");
-    public const int Tint = 170; // ribbon colour over its frosted glass, 0-255: lower shows more of what is behind
+    public const int Tint = 200; // board dots overlay colour, 0-255: lower shows more of the player behind it
     // Exo 2 (the font MultiViewer uses) ships inside Pinboard.exe; loaded for GDI (TextRenderer) and GDI+ (DrawString). Segoe UI if it fails.
     static readonly System.Drawing.Text.PrivateFontCollection fonts = new();
     public static readonly FontFamily Face = Load("Exo2-Medium.ttf", "Exo 2 Medium") ?? new("Segoe UI"), FaceBold = Load("Exo2-SemiBold.ttf", "Exo 2 SemiBold") ?? new("Segoe UI Semibold");
@@ -209,14 +209,14 @@ class Layer : Form
         base.OnFormClosing(e);
     }
 
-    public void Put(Bitmap b, Point at)
+    public void Put(Bitmap b, Point at, byte alpha = 255)
     {
-        Draw(Handle, b, at);
+        Draw(Handle, b, at, alpha);
         if (!On) { N.ShowWindow(Handle, 4); On = true; } // SW_SHOWNOACTIVATE
     }
 
     // Hands a bitmap to a layered window; Windows keeps and shows it without asking the window to paint.
-    public static void Draw(IntPtr h, Bitmap b, Point at)
+    public static void Draw(IntPtr h, Bitmap b, Point at, byte alpha = 255)
     {
         var scr = N.GetDC(0);
         var mem = N.CreateCompatibleDC(scr);
@@ -224,7 +224,7 @@ class Layer : Form
         var old = N.SelectObject(mem, hb);
         var size = new Size(b.Width, b.Height);
         var src = Point.Empty;
-        var blend = new N.Blend { alpha = 255, format = 1 }; // AC_SRC_ALPHA
+        var blend = new N.Blend { alpha = alpha, format = 1 }; // AC_SRC_ALPHA; alpha fades the whole image
         N.UpdateLayeredWindow(h, scr, ref at, ref size, mem, ref src, 0, ref blend, 2);
         N.SelectObject(mem, old); N.DeleteObject(hb); N.DeleteDC(mem); N.ReleaseDC(0, scr);
     }
@@ -267,43 +267,6 @@ class Shield : Form
         N.SetWindowPos(Handle, 0, r.X, r.Y, r.Width, r.Height, 0x14 | (on ? 0u : 0x40)); // NOZORDER | NOACTIVATE (| SHOWWINDOW)
         on = true;
     }
-
-    public void Off() { if (on) { N.ShowWindow(Handle, 0); on = false; } }
-}
-
-// Frosted glass under a ribbon: a click-through window kept right below it; Windows blurs what is behind.
-// The ribbon on top draws tint, dots and text and takes the clicks.
-class Glass : Form
-{
-    bool on;
-
-    public Glass(bool topMost, bool round)
-    {
-        FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual;
-        BackColor = Color.Black; TopMost = topMost; // black: no paint of its own, the blur shows
-        _ = Handle;
-        if (round) Theme.Round(Handle);
-        var a = new N.Accent { State = 3 }; // ACCENT_ENABLE_BLURBEHIND
-        var p = Marshal.AllocHGlobal(Marshal.SizeOf(a));
-        Marshal.StructureToPtr(a, p, false);
-        var d = new N.CompAttr { Attr = 19, Data = p, Size = Marshal.SizeOf(a) }; // WCA_ACCENT_POLICY
-        N.SetWindowCompositionAttribute(Handle, ref d);
-        Marshal.FreeHGlobal(p);
-    }
-
-    protected override bool ShowWithoutActivation => true;
-
-    protected override CreateParams CreateParams // TRANSPARENT (click-through) | TOOLWINDOW | NOACTIVATE
-    { get { var p = base.CreateParams; p.ExStyle |= 0x20 | 0x80 | 0x08000000; return p; } }
-
-    protected override void OnFormClosing(FormClosingEventArgs e)
-    {
-        e.Cancel = e.CloseReason != CloseReason.ApplicationExitCall;
-        base.OnFormClosing(e);
-    }
-
-    // Right below window above, at r (screen px).
-    public void Under(IntPtr above, Rectangle r) { N.SetWindowPos(Handle, above, r.X, r.Y, r.Width, r.Height, 0x10 | (on ? 0u : 0x40)); on = true; } // NOACTIVATE (| SHOWWINDOW)
 
     public void Off() { if (on) { N.ShowWindow(Handle, 0); on = false; } }
 }
@@ -387,20 +350,25 @@ class Arrow : Layer
     }
 }
 
-// Board dots for full screen, where there is no title bar: bottom centre of the board, shown at the bottom edge
-// and for a moment after a board change. Click a dot to go to that board. Frosted glass under it.
+// Board dots and name: see-through rounded overlay at the top centre of the board. Click a dot to go to that board.
+// Full while nothing is under it; with a player under it, it fades out holdMs after it last woke.
 class Dots : Layer
 {
+    const int FadeMs = 600;
     public Action<int>? Go;
-    readonly Glass glass = new(true, true);
     Bitmap bmp = new(1, 1);
     Point at;
     int n = -1, cur, dot, pad;
     string name = "";
+    long woke = long.MinValue / 2;
+    bool wasCovered;
+    byte alpha;
 
     public Dots() { Cursor = Cursors.Hand; MouseDown += (_, e) => { int k = (e.X - pad) / dot; if (e.X >= pad && k < n) Go?.Invoke(k); }; }
 
-    public Rectangle Box => new(at, bmp.Size);
+    public Size Image => bmp.Size;
+
+    public void Wake() => woke = Environment.TickCount64;
 
     // Redrawn only when boards, board on screen, name or scale change.
     public void Set(int boards, int current, string label, float scale)
@@ -416,18 +384,27 @@ class Dots : Layer
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = Theme.Hint;
             using (var tint = new SolidBrush(Color.FromArgb(Theme.Tint, Theme.Title)))
-            using (var r = Theme.Rounded(new RectangleF(0, 0, b.Width, h), 8 * scale)) g.FillPath(tint, r); // corners match Windows 11's round glass
+            using (var r = Theme.Rounded(new RectangleF(0, 0, b.Width, h), h / 2f)) g.FillPath(tint, r);
             Pips.Draw(g, n, cur, -1, k => new(pad + k * dot, 0, dot, h), scale);
             using var white = new SolidBrush(Theme.Text);
             g.DrawString(label, font, white, new RectangleF(pad + n * dot + pad / 2, 0, tw, h), new StringFormat { LineAlignment = StringAlignment.Center });
         }
         bmp.Dispose(); bmp = b;
-        if (On) { Put(bmp, at); glass.Under(Handle, Box); }
+        if (On) Put(bmp, at, alpha);
     }
 
-    public void ShowAt(Point p) { if (!On || p != at) { at = p; Put(bmp, p); glass.Under(Handle, Box); } }
-
-    public new void Off() { base.Off(); glass.Off(); }
+    // Each tick: can = Pinboard or MultiViewer in front; covered = a player of the board on screen under it.
+    public void Tick(bool can, Point pos, bool covered, Point cursor, int holdMs)
+    {
+        long now = Environment.TickCount64;
+        if (covered && !wasCovered) woke = now; // a player just sat on it: it fades holdMs from now
+        wasCovered = covered;
+        if (On && new Rectangle(at, bmp.Size).Contains(cursor)) woke = now;
+        double f = !covered ? 1 : Math.Clamp(1 - (now - woke - holdMs) / (double)FadeMs, 0, 1);
+        byte a = (byte)Math.Round(f * f * 255); // eases out
+        if (!can || a == 0) { Off(); return; }
+        if (!On || pos != at || a != alpha) { at = pos; alpha = a; Put(bmp, pos, a); }
+    }
 }
 
 // Text block drawn like MultiViewer's (Theme.Draw): wraps at its width, height set from the text.

@@ -148,9 +148,9 @@ class Hub : Form
                 Heading("Steps");
                 Card(
                     ("1  Start", "Open Pinboard and MultiViewer. Pinboard waits in system tray. It opens when your setup opens, on board 1.", null),
-                    ("2  Change board", "Click arrow at left or right edge, or click a dot in title bar. Full screen: dots are at the bottom.", null),
+                    ("2  Change board", "Click arrow at left or right edge, or click a dot at top of screen. Dots fade when a player is under them: touch top edge to show them.", null),
                     ("3  Move player", $"Drag player onto arrow and hold. Or press {K("sendPrev")} / {K("sendNext")}: player in front goes to previous / next board.", null),
-                    ("4  Resize", $"Drag Pinboard edges. Players scale with it and stay inside. {K("full")}: full screen.", null),
+                    ("4  Full screen", $"{K("full")}: board covers taskbar. Again: taskbar back.", null),
                     ("5  Save", "Arrange boards, then save setup in MultiViewer. Setup opens with each player on its board.", null),
                     ("6  Find player", $"Player lost or minimized: press {K("menu")}, or click tray icon. Click player: it comes back on this board. Drag menu to move it.", null));
                 Heading("Settings needed");
@@ -166,7 +166,7 @@ class Hub : Form
                 for (int k = 0; k < c.Boards; k++)
                 {
                     int b = k;
-                    rows.Add(($"Board {k + 1} name", "Shows in title bar, menu and board dots.", Field(c.Name(k), s => { c.Names[b] = s; Apply(); })));
+                    rows.Add(($"Board {k + 1} name", "Shows in menu and board dots.", Field(c.Name(k), s => { c.Names[b] = s; Apply(); })));
                 }
                 Card(rows.ToArray());
                 Heading("Slide");
