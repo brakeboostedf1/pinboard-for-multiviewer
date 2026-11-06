@@ -1,0 +1,10 @@
+{
+  "Boards": 4,
+  "SlideMs": 350,
+  "Back": "#101014",
+  "ArrowHideMs": 2000,
+  "HoldMs": 300,
+  "Protect": true,
+  "Monitor": "",
+  "Skip": "^(Home|[0-9]{4} .+) . MultiViewer$"
+}

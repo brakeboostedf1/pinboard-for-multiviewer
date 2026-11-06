@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>Pinboard</AssemblyName>
+    <ApplicationIcon>Pinboard.ico</ApplicationIcon>
+    <PathMap>$(MSBuildProjectDirectory)=.</PathMap>
+    <Deterministic>true</Deterministic>
+    <Version>1.0.0</Version>
+    <Product>Pinboard for MultiViewer</Product>
+    <Company>Pinboard</Company>
+    <Authors>Pinboard</Authors>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Update="pinboard.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
