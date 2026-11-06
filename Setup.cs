@@ -286,12 +286,22 @@ static class Setup
     public static int Remove(string[] a)
     {
         if (a.Contains("--files")) return RemoveFiles();
-        if (MessageBox.Show($"Remove {Name}?\nMultiViewer and its setups stay as they are.", $"Uninstall {Name}",
-                MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return 1;
+        // Standard uninstall wording: ask, remove, confirm.
+        string title = $"{Name} Uninstall";
+        if (MessageBox.Show($"Are you sure you want to completely remove {Name} and all of its components?\n\nMultiViewer and its setups stay as they are.",
+                title, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return 1;
         Quit();
+        int r = Admin("--uninstall --files");
+        if (r != 0)
+        {
+            MessageBox.Show(r == 1223 ? $"Uninstall needs administrator rights. {Name} was not removed." : $"{Name} could not be removed.",
+                title, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
+        }
         using (var run = Registry.CurrentUser.OpenSubKey(Run, true)) run?.DeleteValue(Name, false);
         Delete(Program.Data, "settings.json", "pinboard.log", "help-hidden", "hidden.txt", "selftest.txt");
-        return Admin("--uninstall --files") == 0 ? 0 : 1;
+        MessageBox.Show($"{Name} was successfully removed from your computer.", title, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        return 0;
     }
 
     // Admin part: only from the folder Setup recorded, only Pinboard's own file.
