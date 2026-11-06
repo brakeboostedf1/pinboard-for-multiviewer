@@ -350,7 +350,7 @@ static class Setup
             return 1;
         }
         using (var run = Registry.CurrentUser.OpenSubKey(Run, true)) run?.DeleteValue(Name, false);
-        Delete(Program.Data, "settings.json", "pinboard.log", "help-hidden", "hidden.txt", "selftest.txt");
+        Delete(Program.Data, "settings.json", "pinboard.log", "help-hidden", "hidden.txt", "selftest.txt", "setup-boards.txt", "session.txt");
         if (!quiet) MessageBox.Show($"{Name} was successfully removed from your computer.", title, MessageBoxButtons.OK, MessageBoxIcon.Information);
         return 0;
     }
